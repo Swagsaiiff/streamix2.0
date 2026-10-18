@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createStream, cleanupStream } from "../api.js";
 import { audioTrackLabel } from "../lib/languages.js";
+import { setStremioAddonUrl } from "../providers/stremio.js";
 import {
   AUTO_QUALITY,
   applyQuality,
@@ -76,6 +77,8 @@ export default function Player({ item, onClose, onProgress }) {
   const [resumedFrom, setResumedFrom] = useState(null);
   const [ended, setEnded] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customInputValue, setCustomInputValue] = useState("");
 
   const queue = useMemo(() => buildEpisodeQueue(current), [current]);
   const queueIndex = useMemo(() => {
@@ -148,6 +151,7 @@ export default function Player({ item, onClose, onProgress }) {
           episode: playItem.episode,
           title: playItem.title,
           year: playItem.year,
+          customStreamUrl: playItem.customStreamUrl,
           onStatus: (_st, msg) => {
             if (!cancelled) setLoadingMessage(msg);
           }
@@ -516,6 +520,26 @@ export default function Player({ item, onClose, onProgress }) {
     setAttempt((n) => n + 1);
   }, []);
 
+  const handleCustomSubmit = useCallback(
+    (e) => {
+      e?.preventDefault();
+      const val = customInputValue.trim();
+      if (!val) return;
+      if (sessionRef.current) cleanupStream(sessionRef.current);
+      sessionRef.current = null;
+      if (val.includes(".m3u8") || val.includes(".mp4") || val.includes(".mkv") || val.includes(".webm")) {
+        setCurrent((prev) => ({ ...prev, customStreamUrl: val }));
+        setShowCustomInput(false);
+        setAttempt((a) => a + 1);
+      } else {
+        setStremioAddonUrl(val);
+        setShowCustomInput(false);
+        setAttempt((a) => a + 1);
+      }
+    },
+    [customInputValue]
+  );
+
   const goToEpisode = useCallback(
     (ep) => {
       if (!ep) return;
@@ -605,17 +629,52 @@ export default function Player({ item, onClose, onProgress }) {
           <div className="player-error-panel" role="alert">
             <h2>Playback error</h2>
             <p>{error}</p>
-            <div className="player-error-actions">
-              <button type="button" className="player-btn player-btn-primary" onClick={playFixture}>
-                Play Test Fixture
-              </button>
-              <button type="button" className="player-btn" onClick={retry}>
-                Retry
-              </button>
-              <button type="button" className="player-btn" onClick={onClose}>
-                Back
-              </button>
-            </div>
+            {showCustomInput ? (
+              <form onSubmit={handleCustomSubmit} className="player-custom-form" style={{ marginTop: "1rem" }}>
+                <input
+                  type="text"
+                  className="player-custom-input"
+                  placeholder="Paste Stremio Addon manifest or .mp4/.m3u8 stream URL..."
+                  value={customInputValue}
+                  onChange={(e) => setCustomInputValue(e.target.value)}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "10px",
+                    borderRadius: "6px",
+                    border: "1px solid #555",
+                    background: "#181818",
+                    color: "#fff",
+                    marginBottom: "12px",
+                    fontSize: "0.95rem"
+                  }}
+                  autoFocus
+                />
+                <div className="player-error-actions">
+                  <button type="submit" className="player-btn player-btn-primary">
+                    Play / Save
+                  </button>
+                  <button type="button" className="player-btn" onClick={() => setShowCustomInput(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="player-error-actions">
+                <button type="button" className="player-btn player-btn-primary" onClick={() => setShowCustomInput(true)}>
+                  Custom Stream / Addon
+                </button>
+                <button type="button" className="player-btn" onClick={playFixture}>
+                  Play Test Fixture
+                </button>
+                <button type="button" className="player-btn" onClick={retry}>
+                  Retry
+                </button>
+                <button type="button" className="player-btn" onClick={onClose}>
+                  Back
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

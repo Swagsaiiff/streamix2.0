@@ -2,8 +2,9 @@
 
 ## Current phase
 
-Phase 10: CORS Proxy Architecture Implementation & Cloudflare Worker Deployment Setup (Completed).
-Implemented intermediate CORS proxy architecture to eliminate direct browser fetch CORS blocks. Created `packages/client/src/lib/proxy.js`, updated all VegaMovies resolution queries to route through `toProxiedUrl`, provided production-ready Cloudflare Worker script and Wrangler config in `cloudflare-worker/`, documented `VITE_CORS_PROXY`, and expanded unit test suite to 51 passing tests.
+Phase 11: Stremio Addon Stream Resolution & Custom Stream URL Integration (Completed).
+Implemented Stremio Addon Protocol v3 provider (`packages/client/src/providers/stremio.js`) supporting standard `/stream/{type}/{id}.json` endpoints, custom direct stream URLs (.mp4, .m3u8, .mkv), and an interactive player fallback UI in `Player.jsx` to test and stream real content. Verified with 54 passing client unit tests, successful production build, and all 7 MediaBunny verification checks passing.
+
 
 ## Permanent VegaMovies & CSX Provider Architecture Audit
 

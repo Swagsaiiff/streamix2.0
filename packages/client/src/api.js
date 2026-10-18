@@ -1,5 +1,6 @@
 import { buildHomeSections, searchCinemeta, getCinemetaDetails } from "./providers/cinemeta.js";
 import { resolveVegaStream } from "./providers/vegamovies.js";
+import { resolveStremioStream, getStremioAddonUrl } from "./providers/stremio.js";
 import { createMediaPipeline } from "./media/pipeline.js";
 
 const FIXTURE_FALLBACK_URL = "/fixtures/multi-audio-test.mkv";
@@ -22,7 +23,7 @@ export async function fetchDetail(type, id, options = {}) {
   return { item };
 }
 
-export async function createStream(type, id, { lang, provider, season, episode, title, year, onStatus, isTestFixture = false, ...options } = {}) {
+export async function createStream(type, id, { lang, provider, season, episode, title, year, onStatus, isTestFixture = false, customStreamUrl = null, stremioAddonUrl = null, ...options } = {}) {
   if (options.signal?.aborted) {
     const err = new Error("Aborted");
     err.name = "AbortError";
@@ -36,10 +37,16 @@ export async function createStream(type, id, { lang, provider, season, episode, 
   let resolvedTitle = title;
   let resolvedYear = year;
 
-  // Check if test fixture mode is explicitly requested
-  const isFixtureMode = isTestFixture || id === "test-fixture" || options.fixture === true;
-
-  if (isFixtureMode) {
+  // 1. Direct custom stream URL (e.g. user pasted a working .mp4 / .m3u8 / .mkv stream)
+  if (customStreamUrl && typeof customStreamUrl === "string" && customStreamUrl.trim()) {
+    sourceUrl = customStreamUrl.trim();
+    sourceStatus = "provider_stream";
+    sourceProvider = "Custom URL";
+    streamNote = "Playing custom stream source.";
+    resolvedTitle = resolvedTitle || "Custom Stream";
+  }
+  // 2. Explicit test fixture mode
+  else if (isTestFixture || id === "test-fixture" || options.fixture === true) {
     sourceUrl = FIXTURE_FALLBACK_URL;
     sourceStatus = "fixture_fallback";
     sourceProvider = "Test Fixture";
@@ -70,32 +77,57 @@ export async function createStream(type, id, { lang, provider, season, episode, 
 
     onStatus?.("resolving", `Resolving stream for "${resolvedTitle}"...`);
 
-    // Attempt real VegaMovies resolution client-side
-    const vegaResult = await resolveVegaStream({
-      title: resolvedTitle,
-      year: resolvedYear,
-      type,
-      season,
-      episode,
-      signal: options.signal
-    });
+    // Check if a Stremio stream addon is configured
+    const activeStremioAddon = stremioAddonUrl || getStremioAddonUrl();
+    if (activeStremioAddon) {
+      onStatus?.("resolving", `Querying Stremio addon for "${resolvedTitle}"...`);
+      const stremioRes = await resolveStremioStream({
+        type,
+        id,
+        season,
+        episode,
+        signal: options.signal,
+        addonBase: activeStremioAddon
+      });
 
-    if (options.signal?.aborted) {
-      const err = new Error("Aborted");
-      err.name = "AbortError";
-      throw err;
+      if (stremioRes.status === "provider_stream" && stremioRes.url) {
+        sourceUrl = stremioRes.url;
+        sourceStatus = "provider_stream";
+        sourceProvider = "Stremio Addon";
+        streamNote = stremioRes.note;
+      }
     }
 
-    if (vegaResult.status === "provider_stream" && vegaResult.url) {
-      sourceUrl = vegaResult.url;
-      sourceStatus = "provider_stream";
-      sourceProvider = "VegaMovies";
-      streamNote = vegaResult.note;
-    } else {
-      // Do NOT silently substitute the test fixture!
-      // Report the failure honestly as required by project rules.
-      const failureReason = vegaResult.error || `No playable stream source could be resolved from VegaMovies for "${resolvedTitle}".`;
-      throw new Error(failureReason);
+    // If no stream resolved via Stremio addon, attempt VegaMovies client-side
+    if (!sourceUrl) {
+      const vegaResult = await resolveVegaStream({
+        title: resolvedTitle,
+        year: resolvedYear,
+        type,
+        season,
+        episode,
+        signal: options.signal
+      });
+
+      if (options.signal?.aborted) {
+        const err = new Error("Aborted");
+        err.name = "AbortError";
+        throw err;
+      }
+
+      if (vegaResult.status === "provider_stream" && vegaResult.url) {
+        sourceUrl = vegaResult.url;
+        sourceStatus = "provider_stream";
+        sourceProvider = "VegaMovies";
+        streamNote = vegaResult.note;
+      } else {
+        // Do NOT silently substitute the test fixture!
+        // Report the failure honestly with actionable guidance.
+        const failureReason = vegaResult.error || `No playable stream source could be resolved from VegaMovies for "${resolvedTitle}".`;
+        throw new Error(
+          `${failureReason} (VegaMovies is currently blocked by anti-bot/reCAPTCHA. Configure an open Stremio streaming addon or enter a direct stream URL to play.)`
+        );
+      }
     }
   }
 
