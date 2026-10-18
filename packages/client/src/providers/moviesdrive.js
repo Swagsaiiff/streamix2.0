@@ -343,6 +343,7 @@ export async function resolveMoviesDriveStream({
   return {
     status: "provider_stream",
     url: toProxiedUrl(finalMediaUrl),
+    rawUrl: finalMediaUrl,
     mediaType: isHls ? "hls" : isMkv ? "mkv" : "mp4",
     sourceType: "moviesdrive",
     sourceProvider: "MoviesDrive (Hindi Dual Audio)",

@@ -114,49 +114,61 @@ export async function createStream(type, id, { lang, provider, season, episode, 
           signal: options.signal
         });
 
-        if (mdResult.status === "provider_stream" && mdResult.url) {
-          const isMkv = /\.mkv(\?|$)/i.test(mdResult.url) || mdResult.mediaType === "mkv";
-          if (isMkv) {
-            // Forward raw MKV to STREAMIX FFmpeg backend server for HLS transcoding
-            onStatus?.("transcoding", "Connecting to STREAMIX FFmpeg backend for HLS transcoding...");
-            try {
-              const transcodeRes = await fetch(`/api/stream/${type}/${id}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  sourceUrl: mdResult.url,
+        if (mdResult.status === "provider_stream" && (mdResult.rawUrl || mdResult.url)) {
+          const directStreamUrl = mdResult.rawUrl || mdResult.url;
+          // Always stream through the FFmpeg backend server for on-the-fly HLS progressive playback!
+          onStatus?.("transcoding", "Connecting to STREAMIX FFmpeg backend for live HLS streaming...");
+          try {
+            const transcodeRes = await fetch(`/api/stream/${type}/${id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sourceUrl: directStreamUrl,
+                title: resolvedTitle,
+                year: resolvedYear,
+                season,
+                episode,
+                providerName: mdResult.sourceProvider || "MoviesDrive (FFmpeg HLS)"
+              }),
+              signal: options.signal
+            });
+
+            if (transcodeRes.ok) {
+              const sessionData = await transcodeRes.json();
+              if (sessionData.playlistUrl) {
+                // Return HLS stream directly to Player.jsx! No MediaBunny download into browser RAM!
+                return {
+                  sessionId: sessionData.sessionId,
+                  streamMode: "hls",
+                  playlistUrl: sessionData.playlistUrl,
+                  playbackUrl: sessionData.playlistUrl,
+                  audioTracks: (sessionData.audioTracks || []).map((t) => ({
+                    id: t.trackId,
+                    name: t.name,
+                    lang: t.language || "und",
+                    codec: t.codec || "aac"
+                  })),
+                  provider: { name: sessionData.provider?.name || "MoviesDrive (FFmpeg HLS)", resolution: "provider_stream" },
+                  resolution: { status: "provider_stream" },
+                  sourceStatus: "provider_stream",
+                  sourceProvider: sessionData.provider?.name || "MoviesDrive (FFmpeg HLS)",
+                  status: "ready",
                   title: resolvedTitle,
                   year: resolvedYear,
-                  season,
-                  episode,
-                  providerName: mdResult.sourceProvider || "MoviesDrive (FFmpeg HLS)"
-                }),
-                signal: options.signal
-              });
-
-              if (transcodeRes.ok) {
-                const sessionData = await transcodeRes.json();
-                if (sessionData.playlistUrl) {
-                  sourceUrl = sessionData.playlistUrl;
-                  sourceStatus = "provider_stream";
-                  sourceProvider = sessionData.provider?.name || "MoviesDrive (FFmpeg HLS)";
-                  streamNote = `${mdResult.note || resolvedTitle} · Transcoded via FFmpeg HLS`;
-                } else {
-                  moviesDriveError = "Server transcoding session returned no playlist URL.";
-                }
+                  note: `${mdResult.note || resolvedTitle} · Live FFmpeg HLS stream`,
+                  switchAudioTrack: async () => sessionData.playlistUrl,
+                  destroy: () => cleanupStream(sessionData.sessionId)
+                };
               } else {
-                const errBody = await transcodeRes.json().catch(() => null);
-                moviesDriveError = `FFmpeg backend error (${transcodeRes.status}): ${errBody?.message || "Transcoding failed"}`;
+                moviesDriveError = "Server transcoding session returned no playlist URL.";
               }
-            } catch (backendErr) {
-              if (options.signal?.aborted || backendErr.name === "AbortError") throw backendErr;
-              moviesDriveError = `Could not reach STREAMIX backend on port 4000 (${backendErr.message}). Start the server with "npm run dev:all" or "npm run server:start".`;
+            } else {
+              const errBody = await transcodeRes.json().catch(() => null);
+              moviesDriveError = `FFmpeg backend error (${transcodeRes.status}): ${errBody?.message || "Transcoding failed"}`;
             }
-          } else {
-            sourceUrl = mdResult.url;
-            sourceStatus = "provider_stream";
-            sourceProvider = mdResult.sourceProvider || "MoviesDrive";
-            streamNote = mdResult.note;
+          } catch (backendErr) {
+            if (options.signal?.aborted || backendErr.name === "AbortError") throw backendErr;
+            moviesDriveError = `Could not reach STREAMIX backend on port 4000 (${backendErr.message}). Start the server with "npm run dev:all" or "npm run start".`;
           }
         } else {
           moviesDriveError = mdResult.error || `Title "${resolvedTitle}" is not available in MoviesDrive's catalog.`;
