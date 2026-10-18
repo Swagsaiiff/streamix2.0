@@ -100,6 +100,7 @@ export async function createStream(type, id, { lang, provider, season, episode, 
     }
 
     // 2. Query MoviesDrive (Hindi Dubbed & Bollywood CSX Provider)
+    let moviesDriveError = null;
     if (!sourceUrl) {
       try {
         onStatus?.("resolving", `Searching MoviesDrive (Hindi Dual Audio) for "${resolvedTitle}"...`);
@@ -118,6 +119,8 @@ export async function createStream(type, id, { lang, provider, season, episode, 
           sourceStatus = "provider_stream";
           sourceProvider = mdResult.sourceProvider || "MoviesDrive";
           streamNote = mdResult.note;
+        } else {
+          moviesDriveError = mdResult.error || `Title "${resolvedTitle}" is not available in MoviesDrive's catalog.`;
         }
       } catch (mdErr) {
         if (options.signal?.aborted || mdErr.name === "AbortError") {
@@ -125,6 +128,7 @@ export async function createStream(type, id, { lang, provider, season, episode, 
           abortErr.name = "AbortError";
           throw abortErr;
         }
+        moviesDriveError = mdErr.message;
       }
     }
 
@@ -151,11 +155,10 @@ export async function createStream(type, id, { lang, provider, season, episode, 
         sourceProvider = "VegaMovies";
         streamNote = vegaResult.note;
       } else {
-        // Do NOT silently substitute the test fixture!
-        // Report the failure honestly with actionable guidance.
-        const failureReason = vegaResult.error || `No playable stream source could be resolved for "${resolvedTitle}".`;
+        // Report provider results honestly without silent substitution
+        const vegaReason = vegaResult.error || "VegaMovies resolution failed: endpoint unreachable.";
         throw new Error(
-          `${failureReason} (MoviesDrive & VegaMovies could not resolve an active stream. Configure a Stremio addon or enter a direct stream URL to play.)`
+          `${vegaReason} (MoviesDrive: ${moviesDriveError || "Not found in catalog"}. Use "Custom Stream / Addon" to enter a stream URL or Stremio addon.)`
         );
       }
     }
