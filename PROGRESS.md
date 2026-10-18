@@ -1,5 +1,22 @@
 # STREAMIX — Progress
 
+Phase 17: Full-Stack Architecture Reconnection & Server FFmpeg HLS Transcoding (Completed).
+1. Architectural decision approved: User explicitly selected to re-connect `packages/server` with native FFmpeg for live transcoding of raw Matroska (`.mkv`), 10-bit HEVC, and Dolby Digital (AC-3/E-AC-3) streams into browser-playable HLS playlists (`master.m3u8`).
+2. Updated `AGENTS.md` to officially permit full-stack hybrid architecture:
+   - Preserves client-side MediaBunny for direct browser-playable streams (MP4/WebM) and local multi-audio fixtures.
+   - Re-connects `packages/server` (Express + native FFmpeg/ffprobe 9.0.2) on port 4000 to transcode raw MKV and multi-audio pirate streams on the fly into progressive HLS sessions (`/api/stream/:sessionId/master.m3u8`).
+3. Implementation details:
+   - `packages/server/src/routes/stream.js`: Added support for direct `sourceUrl` in `POST /api/stream/:type/:id`, allowing client scrapers to forward any resolved media URL to the server for HLS packaging.
+   - `packages/client/vite.config.js`: Added `/api` proxy forwarding to `http://localhost:4000` for both `dev` and `preview` servers.
+   - `packages/client/src/api.js`: When MoviesDrive resolves a raw MKV file, it automatically requests an FFmpeg transcoding session from `/api/stream/:type/:id` and returns the resulting progressive HLS playlist to Hls.js.
+   - `package.json`: Updated `"start"` and `"dev"` scripts to concurrently launch both `packages/server` and `packages/client`.
+   - `scripts/verify-client-mediabunny.mjs`: Updated check 7 to verify MediaBunny components while permitting full-stack `/api/stream` integration.
+4. Verification evidence:
+   - `npm run test:server`: 97/97 tests pass (probe, HLS session, audio track exposure, vega, search).
+   - `npm run test:client`: 59/59 tests pass.
+   - `node scripts/verify-client-mediabunny.mjs`: all 7 verification steps pass.
+   - `npm run build`: built cleanly in 315ms into `packages/client/dist`.
+
 Phase 16: Remote MKV Buffer Prevention & Memory Safeguard (Completed).
 1. Root cause diagnosed from user DevTools network tab:
    - Request URL transferred `712,722 kB` (712 MB) in 1.3 minutes before erroring.

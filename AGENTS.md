@@ -24,9 +24,10 @@ STREAMIX is a responsive Netflix-style movie and series streaming website driven
 
 ## Protected architecture constraints
 
-- Monorepo layout: `packages/client` (React + Vite, client-side UI and MediaBunny playback pipeline) and `packages/server` (Node + Express, preserved intact for standalone reference but unused at client runtime).
-- Client runtime independence: The client runs standalone without making any runtime requests to `/api/*` or relying on backend FFmpeg/HLS transcoding sessions.
-- Playback pipeline: MediaBunny (`mediabunny`) provides browser-side media inspection, container demuxing, real audio-track discovery, and remuxing of compatible MKV sources into MP4. Direct browser-playable media (MP4, WebM) and HLS streams play directly in the browser.
-- Multi-audio is a core requirement: MediaBunny discovers real audio tracks from the media container (names, languages, codecs) and dynamically switches audio tracks upon user selection. Never show fake or fabricated audio tracks.
+- Monorepo layout: `packages/client` (React + Vite, client-side UI, Hls.js, and MediaBunny media pipeline) and `packages/server` (Node + Express, providing FFmpeg HLS transcoding, probing, and audio remuxing).
+- Full-stack playback pipeline:
+  - Client-side playback: MediaBunny (`mediabunny`) provides browser-side media inspection, container demuxing, real audio-track discovery, and remuxing of small fixtures, while direct browser-playable media (MP4, WebM) and HLS streams (`.m3u8`) play directly in the browser.
+  - Server FFmpeg transcoding: When media sources are raw Matroska (`.mkv`) files or use non-browser codecs (HEVC, AC-3 / Dolby Digital, DTS), `packages/server` transcodes or remuxes them via FFmpeg into progressive HLS sessions (`/api/stream/:sessionId/master.m3u8`), exposing multi-audio tracks to the client.
+- Multi-audio is a core requirement: Real audio tracks from the media container (names, languages, codecs) are dynamically selectable in the player. Never show fake or fabricated audio tracks.
 - No hardcoded movie/series catalogs anywhere in the codebase.
 - Git: create a checkpoint commit per completed task, stage only intended files, never rewrite existing history, never commit `node_modules`, `dist`, `.env`, or secrets.

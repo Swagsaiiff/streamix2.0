@@ -159,5 +159,21 @@ function localCorsProxyPlugin() {
 }
 
 export default defineConfig({
-  plugins: [react(), localCorsProxyPlugin()]
+  plugins: [react(), localCorsProxyPlugin()],
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true
+      }
+    }
+  },
+  preview: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true
+      }
+    }
+  }
 });

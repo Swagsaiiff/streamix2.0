@@ -10,7 +10,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=packages/client",
+    "dev": "npm run dev:all",
     "dev:client": "npm run dev --workspace=packages/client",
     "dev:all": "concurrently --kill-others -n server,client -c blue,magenta \"npm run dev --workspace=packages/server\" \"npm run dev --workspace=packages/client\"",
     "dev:server": "npm run dev --workspace=packages/server",
@@ -20,7 +20,8 @@
     "test:live": "node scripts/verify-live-provider.mjs",
     "test:server": "npm run test --workspace=packages/server",
     "verify": "node scripts/verify-client-mediabunny.mjs",
-    "start": "npm run preview --workspace=packages/client",
+    "start": "concurrently --kill-others -n server,client -c blue,magenta \"npm run start --workspace=packages/server\" \"npm run preview --workspace=packages/client\"",
+    "start:client": "npm run preview --workspace=packages/client",
     "server:start": "npm run start --workspace=packages/server",
     "health": "node scripts/healthcheck.mjs"
   },

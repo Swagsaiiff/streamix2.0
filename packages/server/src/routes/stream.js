@@ -40,22 +40,40 @@ export function streamRouter({
           : undefined;
 
     try {
-      logger.info("stream.resolve", { type, id, preferredLanguage, provider: providerName });
-      const stream = await resolver.resolveStream(type, id, {
-        preferredLanguage,
-        provider: providerName,
-        allowFixture,
-        season: Number.isFinite(season) ? season : null,
-        episode: Number.isFinite(episode) ? episode : null
-      });
-      logger.info("stream.source_resolved", {
-        sourceType: stream.sourceType,
-        resolution: stream.resolution.status,
-        provider: stream.provider.name
-      });
+      let stream;
+      if (req.body?.sourceUrl) {
+        stream = {
+          sourceUrl: req.body.sourceUrl,
+          sourceType: "remote_url",
+          provider: { name: req.body.providerName || providerName || "STREAMIX FFmpeg Backend" },
+          resolution: { status: "resolved" },
+          headers: req.body.headers ?? {},
+          variants: null,
+          title: req.body.title || id,
+          year: req.body.year || null,
+          episode: req.body.episode || null,
+          mediaType: req.body.mediaType || "mkv",
+          note: req.body.note || null
+        };
+        logger.info("stream.custom_source", { type, id, sourceUrl: stream.sourceUrl });
+      } else {
+        logger.info("stream.resolve", { type, id, preferredLanguage, provider: providerName });
+        stream = await resolver.resolveStream(type, id, {
+          preferredLanguage,
+          provider: providerName,
+          allowFixture,
+          season: Number.isFinite(season) ? season : null,
+          episode: Number.isFinite(episode) ? episode : null
+        });
+        logger.info("stream.source_resolved", {
+          sourceType: stream.sourceType,
+          resolution: stream.resolution.status,
+          provider: stream.provider.name
+        });
 
-      if (stream.sourceType === "local_fixture") {
-        logger.warn("stream.fixture_fallback", { type, id, provider: providerName });
+        if (stream.sourceType === "local_fixture") {
+          logger.warn("stream.fixture_fallback", { type, id, provider: providerName });
+        }
       }
 
       const dedupeKey = `${stream.provider.name}:${type}:${id}:${season ?? ""}:${episode ?? ""}:${preferredLanguage ?? ""}:${stream.sourceUrl}`;

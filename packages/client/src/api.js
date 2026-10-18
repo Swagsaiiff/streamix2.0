@@ -117,7 +117,41 @@ export async function createStream(type, id, { lang, provider, season, episode, 
         if (mdResult.status === "provider_stream" && mdResult.url) {
           const isMkv = /\.mkv(\?|$)/i.test(mdResult.url) || mdResult.mediaType === "mkv";
           if (isMkv) {
-            moviesDriveError = "MoviesDrive returned a raw Matroska (.mkv) file. Web browsers require HLS (.m3u8) or MP4 web streams.";
+            // Forward raw MKV to STREAMIX FFmpeg backend server for HLS transcoding
+            onStatus?.("transcoding", "Connecting to STREAMIX FFmpeg backend for HLS transcoding...");
+            try {
+              const transcodeRes = await fetch(`/api/stream/${type}/${id}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  sourceUrl: mdResult.url,
+                  title: resolvedTitle,
+                  year: resolvedYear,
+                  season,
+                  episode,
+                  providerName: mdResult.sourceProvider || "MoviesDrive (FFmpeg HLS)"
+                }),
+                signal: options.signal
+              });
+
+              if (transcodeRes.ok) {
+                const sessionData = await transcodeRes.json();
+                if (sessionData.playlistUrl) {
+                  sourceUrl = sessionData.playlistUrl;
+                  sourceStatus = "provider_stream";
+                  sourceProvider = sessionData.provider?.name || "MoviesDrive (FFmpeg HLS)";
+                  streamNote = `${mdResult.note || resolvedTitle} · Transcoded via FFmpeg HLS`;
+                } else {
+                  moviesDriveError = "Server transcoding session returned no playlist URL.";
+                }
+              } else {
+                const errBody = await transcodeRes.json().catch(() => null);
+                moviesDriveError = `FFmpeg backend error (${transcodeRes.status}): ${errBody?.message || "Transcoding failed"}`;
+              }
+            } catch (backendErr) {
+              if (options.signal?.aborted || backendErr.name === "AbortError") throw backendErr;
+              moviesDriveError = `Could not reach STREAMIX backend on port 4000 (${backendErr.message}). Start the server with "npm run dev:all" or "npm run server:start".`;
+            }
           } else {
             sourceUrl = mdResult.url;
             sourceStatus = "provider_stream";
