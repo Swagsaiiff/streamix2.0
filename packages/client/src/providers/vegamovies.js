@@ -1,3 +1,5 @@
+import { toProxiedUrl } from "../lib/proxy.js";
+
 const URLS_JSON = "https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json";
 const FALLBACK_BASE = "https://vegamovies.gallery";
 const HOST_PATTERN = /(nexdrive\.|vcloud\.|hubcloud\.|fastdl\.|filebee\.|vegadrive\.|pixeldrain\.|gofile\.|gdflix\.|hubdrive\.|driveseed\.|driveleech\.|drivebot\.)/i;
@@ -252,7 +254,7 @@ export function parseVegaSearch(json) {
 
 export async function getVegaBaseUrl(signal) {
   try {
-    const res = await fetch(URLS_JSON, { signal });
+    const res = await fetch(toProxiedUrl(URLS_JSON), { signal });
     if (res.ok) {
       const data = await res.json();
       if (data && typeof data.vegamovies === "string" && data.vegamovies.startsWith("http")) {
@@ -285,15 +287,16 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     throw err;
   }
 
-  const searchUrl = `${base}/search.php?q=${encodeURIComponent(title)}&page=1`;
+  const rawSearchUrl = `${base}/search.php?q=${encodeURIComponent(title)}&page=1`;
+  const proxiedSearchUrl = toProxiedUrl(rawSearchUrl);
   let searchJson;
   try {
-    const res = await fetch(searchUrl, { signal });
+    const res = await fetch(proxiedSearchUrl, { signal });
     if (!res.ok) {
       return {
         status: "http_error",
         httpStatus: res.status,
-        error: `VegaMovies resolution failed: "${searchUrl}" returned HTTP ${res.status} (${res.statusText || "Error"}). The active VegaMovies endpoint does not host a working search index.`
+        error: `VegaMovies resolution failed: "${rawSearchUrl}" returned HTTP ${res.status} (${res.statusText || "Error"}). The active VegaMovies endpoint does not host a working search index.`
       };
     }
     const contentType = res.headers.get("content-type") || "";
@@ -303,7 +306,7 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     } catch {
       return {
         status: "invalid_response",
-        error: `VegaMovies resolution failed: "${searchUrl}" returned non-JSON content (Content-Type: "${contentType}"). The provider returned a landing page or challenge instead of search index data.`
+        error: `VegaMovies resolution failed: "${rawSearchUrl}" returned non-JSON content (Content-Type: "${contentType}"). The provider returned a landing page or challenge instead of search index data.`
       };
     }
   } catch (err) {
@@ -314,7 +317,7 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     }
     return {
       status: "cors_blocked",
-      error: `VegaMovies resolution unavailable: Direct browser fetch to "${searchUrl}" failed (${err.message}). VegaMovies endpoints do not send Access-Control-Allow-Origin headers required for browser-side requests.`
+      error: `VegaMovies resolution unavailable: Direct browser fetch to "${proxiedSearchUrl}" failed (${err.message}). Ensure an intermediate CORS proxy (VITE_CORS_PROXY) is configured with Access-Control-Allow-Origin: * to bypass browser CORS restrictions.`
     };
   }
 
@@ -337,7 +340,8 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
   const bestCandidate = candidates[0].item;
 
   try {
-    const pageRes = await fetch(bestCandidate.id, { signal });
+    const proxiedPageUrl = toProxiedUrl(bestCandidate.id);
+    const pageRes = await fetch(proxiedPageUrl, { signal });
     if (!pageRes.ok) {
       return {
         status: "http_error",
@@ -390,3 +394,5 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     };
   }
 }
+
+export { toProxiedUrl };

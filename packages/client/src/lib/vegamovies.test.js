@@ -14,7 +14,8 @@ import {
   pickCandidateForEpisode,
   hostLinkIndexForEpisode,
   resolveVegaStream,
-  getVegaBaseUrl
+  getVegaBaseUrl,
+  toProxiedUrl
 } from "../providers/vegamovies.js";
 import { createStream } from "../api.js";
 
@@ -293,5 +294,64 @@ test("createStream rejects real provider failure and requires explicit test mode
     fixtureStream.destroy?.();
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("toProxiedUrl wraps target URLs with intermediate CORS proxy", () => {
+  const target = "https://1vegamovies.baby/search.php?q=Vincenzo&page=1";
+
+  // 1. Unset proxy returns original URL
+  assert.equal(toProxiedUrl(target, ""), target);
+  assert.equal(toProxiedUrl(target, null), target);
+
+  // 2. Query param style proxy (?url=)
+  const queryProxy = "https://streamix-cors-proxy.example.workers.dev/?url=";
+  const expectedQuery = `${queryProxy}${encodeURIComponent(target)}`;
+  assert.equal(toProxiedUrl(target, queryProxy), expectedQuery);
+
+  // 3. Path style proxy (/<target>)
+  const pathProxy = "https://streamix-cors-proxy.example.workers.dev/";
+  const expectedPath = `${pathProxy}${encodeURIComponent(target)}`;
+  assert.equal(toProxiedUrl(target, pathProxy), expectedPath);
+
+  // 4. Idempotent: does not double-wrap an already proxied URL
+  assert.equal(toProxiedUrl(expectedQuery, queryProxy), expectedQuery);
+});
+
+test("resolveVegaStream routes requests through proxy when configured", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalEnv = process.env.VITE_CORS_PROXY;
+  process.env.VITE_CORS_PROXY = "https://test-worker.workers.dev/?url=";
+
+  const fetchedUrls = [];
+  try {
+    globalThis.fetch = async (url) => {
+      fetchedUrls.push(String(url));
+      if (String(url).includes("urls.json")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ vegamovies: "https://1vegamovies.baby" })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ hits: [] })
+      };
+    };
+
+    const res = await resolveVegaStream({ title: "Vincenzo", year: 2021, type: "series" });
+    assert.equal(res.status, "not_found");
+
+    // Verify all outbound requests were routed through the proxy
+    assert.ok(fetchedUrls.length >= 2);
+    assert.ok(fetchedUrls[0].startsWith("https://test-worker.workers.dev/?url="), "urls.json was routed through proxy");
+    assert.ok(fetchedUrls[1].startsWith("https://test-worker.workers.dev/?url="), "search.php was routed through proxy");
+    assert.ok(fetchedUrls[1].includes(encodeURIComponent("https://1vegamovies.baby/search.php?q=Vincenzo&page=1")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.VITE_CORS_PROXY = originalEnv;
   }
 });
