@@ -57,6 +57,83 @@ export function cleanVegaTitle(raw) {
   return { title: value || String(raw).trim(), year };
 }
 
+export function normalizeForMatch(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function scoreTitleMatch(query, candidateTitle, candidateYear, wantedYear) {
+  const q = normalizeForMatch(query);
+  const t = normalizeForMatch(candidateTitle);
+  if (!q || !t) return 0;
+
+  let score;
+  if (t === q) score = 1000;
+  else if (t.startsWith(`${q} `)) score = 700 - Math.min(100, t.length - q.length);
+  else if (t.startsWith(q)) score = 650;
+  else if (new RegExp(`(?:^| )${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`).test(t)) score = 500;
+  else if (q.split(" ").every((token) => t.split(" ").includes(token))) score = 400;
+  else if (t.includes(q)) score = 300;
+  else {
+    const qTokens = q.split(" ").filter(Boolean);
+    const tTokens = new Set(t.split(" ").filter(Boolean));
+    const overlap = qTokens.filter((token) => tTokens.has(token)).length;
+    score = qTokens.length > 0 ? Math.round((overlap / qTokens.length) * 200) : 0;
+  }
+
+  if (score > 0 && wantedYear && candidateYear) {
+    const diff = Math.abs(Number(candidateYear) - Number(wantedYear));
+    if (diff === 0) score += 120;
+    else if (diff === 1) score += 60;
+    else if (diff > 3) score -= 80;
+  }
+  return Math.max(0, score);
+}
+
+export function pickBestMatch(items, { title, year, minScore = 400 } = {}) {
+  let best = null;
+  let bestScore = 0;
+  for (const item of items) {
+    const score = scoreTitleMatch(title, item.title, item.year, year);
+    if (score > bestScore) {
+      bestScore = score;
+      best = item;
+    }
+  }
+  return bestScore >= minScore ? { item: best, score: bestScore } : null;
+}
+
+export function rankTitleCandidates(items, { title, year = null, type = null, minScore = 400, limit = 5 } = {}) {
+  const scored = [];
+  for (const item of items) {
+    let score = scoreTitleMatch(title, item.title, item.year, year);
+    if (score <= 0) continue;
+    if (type && item.type) {
+      score += item.type === type ? 90 : -120;
+    }
+    if (score >= minScore) scored.push({ item, score });
+  }
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (Number(b.item.year) || 0) - (Number(a.item.year) || 0);
+  });
+
+  const seen = new Set();
+  const unique = [];
+  for (const entry of scored) {
+    const key = entry.item.id ?? `${entry.item.title}:${entry.item.year}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(entry);
+    if (unique.length >= limit) break;
+  }
+  return unique;
+}
+
 export function decodeDoubleAtob(value) {
   try {
     const once = atob(value);
@@ -214,11 +291,21 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     const res = await fetch(searchUrl, { signal });
     if (!res.ok) {
       return {
-        status: "cors_blocked",
-        error: `VegaMovies resolution failed: "${searchUrl}" returned HTTP ${res.status}. The discovered VegaMovies domain does not host a working search index or permits browser cross-origin requests.`
+        status: "http_error",
+        httpStatus: res.status,
+        error: `VegaMovies resolution failed: "${searchUrl}" returned HTTP ${res.status} (${res.statusText || "Error"}). The active VegaMovies endpoint does not host a working search index.`
       };
     }
-    searchJson = await res.json();
+    const contentType = res.headers.get("content-type") || "";
+    const rawText = await res.text();
+    try {
+      searchJson = JSON.parse(rawText);
+    } catch {
+      return {
+        status: "invalid_response",
+        error: `VegaMovies resolution failed: "${searchUrl}" returned non-JSON content (Content-Type: "${contentType}"). The provider returned a landing page or challenge instead of search index data.`
+      };
+    }
   } catch (err) {
     if (signal?.aborted || err.name === "AbortError") {
       const abortErr = new Error("Aborted");
@@ -233,32 +320,63 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
 
   const items = parseVegaSearch(searchJson);
   if (items.length === 0) {
-    return { status: "not_found", error: `No match found on VegaMovies for "${title}"` };
+    return {
+      status: "not_found",
+      error: `No match found on VegaMovies for "${title}"${year ? ` (${year})` : ""}.`
+    };
   }
 
-  const match = items[0];
+  const candidates = rankTitleCandidates(items, { title, year, type });
+  if (candidates.length === 0) {
+    return {
+      status: "not_found",
+      error: `No matching title candidate reached the relevance threshold for "${title}"${year ? ` (${year})` : ""}.`
+    };
+  }
+
+  const bestCandidate = candidates[0].item;
+
   try {
-    const pageRes = await fetch(match.id, { signal });
-    if (!pageRes.ok) throw new Error(`HTTP ${pageRes.status}`);
+    const pageRes = await fetch(bestCandidate.id, { signal });
+    if (!pageRes.ok) {
+      return {
+        status: "http_error",
+        httpStatus: pageRes.status,
+        error: `VegaMovies detail page "${bestCandidate.id}" returned HTTP ${pageRes.status}.`
+      };
+    }
     const pageHtml = await pageRes.text();
-    const mediaCandidates = extractDirectMediaUrls(pageHtml);
+
+    // 1. Direct media candidates on detail page
+    const mediaCandidates = selectMediaCandidates(extractDirectMediaUrls(pageHtml));
     if (mediaCandidates.length > 0) {
       const picked = pickCandidateForEpisode(mediaCandidates, { season, episode });
       if (picked.url) {
         return {
           status: "provider_stream",
           url: picked.url,
-          title: match.title,
-          year: match.year,
+          title: bestCandidate.title,
+          year: bestCandidate.year,
           mediaType: picked.url.includes(".m3u8") ? "hls" : "mkv",
           sourceType: "provider",
-          note: `Resolved via VegaMovies: "${match.title}"`
+          note: `Resolved via VegaMovies: "${bestCandidate.title}"`
         };
       }
     }
+
+    // 2. Link pages and host links
+    const linkPages = extractLinkPages(pageHtml, base);
+    const hostLinks = extractHostLinks(pageHtml);
+    if (linkPages.length > 0 || hostLinks.length > 0) {
+      return {
+        status: "unsupported_host",
+        error: `VegaMovies entry found for "${bestCandidate.title}" (${bestCandidate.type}) but extracting the stream requires cross-origin third-party host unwrapping which is restricted in the browser.`
+      };
+    }
+
     return {
-      status: "unsupported",
-      error: `VegaMovies entry found for "${match.title}" but extracting the stream requires cross-origin third-party host unwrapping which is restricted in the browser.`
+      status: "no_media_url",
+      error: `No playable stream source or host links could be extracted from VegaMovies for "${bestCandidate.title}".`
     };
   } catch (err) {
     if (signal?.aborted || err.name === "AbortError") {
@@ -268,7 +386,7 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     }
     return {
       status: "cors_blocked",
-      error: `Browser CORS blocked reading VegaMovies page (${err.message})`
+      error: `Browser CORS blocked reading VegaMovies detail page "${bestCandidate.id}" (${err.message}).`
     };
   }
 }

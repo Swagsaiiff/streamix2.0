@@ -2,10 +2,10 @@
 
 ## Current phase
 
-Phase 7: STREAMIX 2.0 Playback Failures Resolution & Honest Provider Reporting (Completed).
-Fixed `Output is not defined` runtime error in `pipeline.js`, diagnosed VegaMovies HTTP 404 / browser CORS limitation honestly, removed silent fallback to test fixture, added explicit test fixture player controls, and handled aborted requests cleanly.
+Phase 8: VegaMovies Root-Cause Investigation & Distinct Status Diagnosis (Completed).
+Diagnosed HTTP 404 vs CORS failure modes, ported candidate ranking & series episode indexing, verified MediaBunny playback policy, and added comprehensive unit test suite (48 tests passing).
 
-## Playback Failure Fixes & MediaBunny Pipeline Verification (Verified)
+## VegaMovies Root-Cause Investigation & Verified Architecture Assessment (Verified)
 
 ### 1. Fix `Output is not defined` in `packages/client/src/media/pipeline.js`
 - **Root Cause**: `pipeline.js` instantiated `new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() })` but `Output` was omitted from the `mediabunny` imports statement, causing a runtime `ReferenceError: Output is not defined`.
@@ -30,7 +30,7 @@ Fixed `Output is not defined` runtime error in `pipeline.js`, diagnosed VegaMovi
 - **UI Preservation**: Player UI controls, scrub bar, audio selector, speed settings, resume/progress store, and series next-episode queues remain fully functional and intact.
 
 ### 5. Verification Evidence
-- `npm run test:client`: 38 tests executed, 38 passed, 0 failed.
+- `npm run test:client`: 48 tests executed, 48 passed, 0 failed (added 10 dedicated tests in `packages/client/src/lib/vegamovies.test.js`).
 - `npm run build`: Vite production bundle generated cleanly (0 errors).
 - `node scripts/verify-client-mediabunny.mjs`:
   - Cinemeta Home Rows: 11 rows fetched directly.
@@ -38,7 +38,7 @@ Fixed `Output is not defined` runtime error in `pipeline.js`, diagnosed VegaMovi
   - Detail: "Inception" (148 min, rating 8.8), "Breaking Bad" (62 episodes, S1E1).
   - MediaBunny Audio Discovery: Detected Matroska container with Track 2 (English, AAC) and Track 3 (Spanish, AAC).
   - MediaBunny Audio Switching: Remuxed with Track 2 (2,804,000 bytes MP4) and Track 3 (2,803,707 bytes MP4), verified single switched audio stream.
-  - VegaMovies Resolution: Accurately reported status `cors_blocked` and HTTP 404 diagnosis.
+  - VegaMovies Resolution: Accurately diagnosed `http_error` (HTTP 404 Not Found), `invalid_response`, and `cors_blocked` distinctly.
   - Zero runtime `/api/*` references in client source files verified.
 
 
