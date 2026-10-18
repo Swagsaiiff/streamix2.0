@@ -2,8 +2,9 @@
 
 ## Current phase
 
-Phase 11: Stremio Addon Stream Resolution & Custom Stream URL Integration (Completed).
-Implemented Stremio Addon Protocol v3 provider (`packages/client/src/providers/stremio.js`) supporting standard `/stream/{type}/{id}.json` endpoints, custom direct stream URLs (.mp4, .m3u8, .mkv), and an interactive player fallback UI in `Player.jsx` to test and stream real content. Verified with 54 passing client unit tests, successful production build, and all 7 MediaBunny verification checks passing.
+Phase 12: MoviesDrive Hindi-Dubbed CSX Provider Porting & Integration (Completed).
+Audited all Hindi-dubbed providers in the CSX repository (`https://github.com/SaurabhKaperwan/CSX.git`): Bollyflix, MoviesDrive, Moviesmod, Rogmovies, and HDHub4u. Ported MoviesDrive (`packages/client/src/providers/moviesdrive.js`), the primary Hindi-dubbed and Bollywood provider in CSX. MoviesDrive features a working `search.php` endpoint with rich dual-audio Hindi catalog (Oppenheimer, Inception, Vincenzo, Stree 2, Animal, Breaking Bad, etc.) and direct media link resolution via HubCloud redirect chains. Integrated into `api.js` before VegaMovies fallback. Verified with 59 passing client unit tests, successful Vite production build, and all 7 MediaBunny checks passing.
+
 
 
 ## Permanent VegaMovies & CSX Provider Architecture Audit

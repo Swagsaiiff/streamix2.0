@@ -1,6 +1,7 @@
 import { buildHomeSections, searchCinemeta, getCinemetaDetails } from "./providers/cinemeta.js";
 import { resolveVegaStream } from "./providers/vegamovies.js";
 import { resolveStremioStream, getStremioAddonUrl } from "./providers/stremio.js";
+import { resolveMoviesDriveStream } from "./providers/moviesdrive.js";
 import { createMediaPipeline } from "./media/pipeline.js";
 
 const FIXTURE_FALLBACK_URL = "/fixtures/multi-audio-test.mkv";
@@ -98,7 +99,36 @@ export async function createStream(type, id, { lang, provider, season, episode, 
       }
     }
 
-    // If no stream resolved via Stremio addon, attempt VegaMovies client-side
+    // 2. Query MoviesDrive (Hindi Dubbed & Bollywood CSX Provider)
+    if (!sourceUrl) {
+      try {
+        onStatus?.("resolving", `Searching MoviesDrive (Hindi Dual Audio) for "${resolvedTitle}"...`);
+        const mdResult = await resolveMoviesDriveStream({
+          title: resolvedTitle,
+          year: resolvedYear,
+          type,
+          season,
+          episode,
+          imdbId: id,
+          signal: options.signal
+        });
+
+        if (mdResult.status === "provider_stream" && mdResult.url) {
+          sourceUrl = mdResult.url;
+          sourceStatus = "provider_stream";
+          sourceProvider = mdResult.sourceProvider || "MoviesDrive";
+          streamNote = mdResult.note;
+        }
+      } catch (mdErr) {
+        if (options.signal?.aborted || mdErr.name === "AbortError") {
+          const abortErr = new Error("Aborted");
+          abortErr.name = "AbortError";
+          throw abortErr;
+        }
+      }
+    }
+
+    // 3. If no stream resolved via MoviesDrive or Stremio, attempt VegaMovies client-side
     if (!sourceUrl) {
       const vegaResult = await resolveVegaStream({
         title: resolvedTitle,
@@ -123,9 +153,9 @@ export async function createStream(type, id, { lang, provider, season, episode, 
       } else {
         // Do NOT silently substitute the test fixture!
         // Report the failure honestly with actionable guidance.
-        const failureReason = vegaResult.error || `No playable stream source could be resolved from VegaMovies for "${resolvedTitle}".`;
+        const failureReason = vegaResult.error || `No playable stream source could be resolved for "${resolvedTitle}".`;
         throw new Error(
-          `${failureReason} (VegaMovies is currently blocked by anti-bot/reCAPTCHA. Configure an open Stremio streaming addon or enter a direct stream URL to play.)`
+          `${failureReason} (MoviesDrive & VegaMovies could not resolve an active stream. Configure a Stremio addon or enter a direct stream URL to play.)`
         );
       }
     }
