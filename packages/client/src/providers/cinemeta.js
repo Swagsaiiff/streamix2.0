@@ -8,6 +8,9 @@ const ROW_LIMIT = 24;
 function getPosterUrl(url) {
   if (!url) return null;
   if (url.includes("kitsu.")) return IMAGE_PROXY + url;
+  if (url.includes("live.metahub.space")) {
+    return url.replace("live.metahub.space", "images.metahub.space");
+  }
   return url;
 }
 

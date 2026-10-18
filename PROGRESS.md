@@ -2,44 +2,71 @@
 
 ## Current phase
 
-Phase 8: VegaMovies Root-Cause Investigation & Distinct Status Diagnosis (Completed).
-Diagnosed HTTP 404 vs CORS failure modes, ported candidate ranking & series episode indexing, verified MediaBunny playback policy, and added comprehensive unit test suite (48 tests passing).
+Phase 8: VegaMovies Permanent Root-Cause Investigation & Outcome B Architectural Assessment (Completed).
+Confirmed root cause of repeated VegaMovies browser failure, resolved poster 404s, added 50 passing client tests, validated MediaBunny audio discovery/switching on local fixtures, and established why browser-only client architecture cannot scrape VegaMovies without CORS or a backend proxy.
 
-## VegaMovies Root-Cause Investigation & Verified Architecture Assessment (Verified)
+## VegaMovies Permanent Root-Cause Investigation & Outcome B Assessment
 
-### 1. Fix `Output is not defined` in `packages/client/src/media/pipeline.js`
-- **Root Cause**: `pipeline.js` instantiated `new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() })` but `Output` was omitted from the `mediabunny` imports statement, causing a runtime `ReferenceError: Output is not defined`.
-- **Fix**: Added `Output` to the `mediabunny` named imports list. Verified `Output`, `Conversion`, and `Input` prototype APIs (`dispose`, `cancel`, `execute`) directly against installed `mediabunny@1.61.6`.
-- **Subsequent Runtime Checks**: Verified remuxing and audio-track switching via MediaBunny conversions. Handled conversion cancellation (`conversion.cancel()`) on abort signal, and added `loadedmetadata` listener in `Player.jsx` so that `video.currentTime` and playback state are restored accurately when switching tracks.
+### 1. Files Inspected & Git Commit
+- Inspected files:
+  - `packages/client/src/providers/vegamovies.js`
+  - `packages/client/src/api.js`
+  - `packages/client/src/media/pipeline.js`
+  - `packages/client/src/components/Player.jsx`
+  - `packages/client/src/providers/cinemeta.js`
+  - `packages/client/src/lib/vegamovies.test.js`
+  - `packages/client/package.json`
+  - `packages/client/vite.config.js`
+  - `AGENTS.md`
+  - `PROGRESS.md`
+- Local Git branch `main` (commit `1125d28` and working tree).
 
-### 2. VegaMovies Resolution & Honest CORS Diagnosis
-- **Investigation**: Inspected live VegaMovies endpoints:
-  - `https://1vegamovies.baby/search.php?q=...&page=1` returns HTTP 404.
-  - `https://1vegamovies.baby/?s=...` returns HTTP 200 HTML in Node, but responds with `access-control-allow-origin: null`.
-  - In a standalone browser client without backend proxying, cross-origin HTTP requests to third-party domains lacking CORS headers are blocked by browser security.
-- **Honest Reporting**: In accordance with Rule 1 and Rule 7, no public CORS proxies or fabricated stream URLs were introduced. VegaMovies resolution now diagnoses HTTP 404 / CORS blockage explicitly, providing clear feedback in the UI rather than hanging or claiming playback works.
-- **Backend Folder Untouched**: `packages/server/` was kept completely untouched.
+### 2. Exact Confirmed Root Cause of Repeated VegaMovies Failure
+- **Dynamic Lookup & Route Failure**:
+  - `getVegaBaseUrl()` dynamically queries `https://raw.githubusercontent.com/SaurabhKaperwan/Utils/main/urls.json`, returning `"https://1vegamovies.baby"`.
+  - When querying `https://1vegamovies.baby/search.php?q=Vincenzo&page=1`, the remote server responds with **HTTP 404 Not Found** (`text/html`).
+  - The search route `search.php` does not exist on the current `1vegamovies.baby` deployment (LiteSpeed/Cloudflare).
+- **Browser CORS Rejection at Network Boundary**:
+  - The third-party server returns **no `Access-Control-Allow-Origin`** response header.
+  - In a browser environment (`http://localhost:4173`), when a cross-origin HTTP response lacks CORS headers (regardless of whether the HTTP status code is 200, 404, or 500), the browser's Same-Origin Policy forbids browser JavaScript from reading the response.
+  - The browser's native `window.fetch()` promise rejects immediately with `TypeError: Failed to fetch`.
+- **Why Earlier Fixes Failed**:
+  - Changing `FALLBACK_BASE` had zero effect because the dynamic URL fetch from `urls.json` succeeded and returned `https://1vegamovies.baby`.
+  - Adding an `http_error` branch checking `res.status` / `res.ok` in JavaScript could not execute because `fetch()` rejected at the network boundary before producing any readable `Response` object.
+  - Upstream CSX (`VegaMoviesProvider.kt`) runs inside an Android Dalvik runtime via OkHttp (`app.get()`), which is a native client that does not enforce browser CORS. Standalone browser JavaScript cannot emulate native OkHttp network behavior across origins without CORS headers.
 
-### 3. Removal of Silent Test Fixture Fallback
-- **Root Cause**: `createStream` previously caught resolution failures and silently fell back to `/fixtures/multi-audio-test.mkv`, giving the illusion that a real movie was playing.
-- **Fix**: `createStream` now throws an explicit error when a real title cannot be resolved. Test fixture playback is only activated when explicitly requested (`isTestFixture: true` / `id === "test-fixture"`).
-- **Explicit Test Actions**: Added a dedicated "Play Test Fixture" button to the player error panel and a "Test Fixture" button in the Navbar, allowing users to test MediaBunny multi-audio inspection and switching in test mode (explicitly marked with a `TEST MODE` badge).
+### 3. Poster 404 Resolution
+- **Root Cause**: Cinemeta catalog responses occasionally contain legacy image URLs hosted on `https://live.metahub.space/poster/small/<imdb-id>/img`. The `live.metahub.space` subdomain is decommissioned/deprecated and returns HTTP 404.
+- **Fix**: In `packages/client/src/providers/cinemeta.js` (`getPosterUrl()`), updated URL normalization to replace `live.metahub.space` with the canonical CDN `images.metahub.space`.
 
-### 4. Clean Abort Handling & Player Continuity
-- **Fix**: Aborted requests cleanly throw `AbortError`, which is caught and ignored in `Player.jsx`, `api.js`, and `pipeline.js` without unhandled promise rejections.
-- **UI Preservation**: Player UI controls, scrub bar, audio selector, speed settings, resume/progress store, and series next-episode queues remain fully functional and intact.
-
-### 5. Verification Evidence
-- `npm run test:client`: 48 tests executed, 48 passed, 0 failed (added 10 dedicated tests in `packages/client/src/lib/vegamovies.test.js`).
-- `npm run build`: Vite production bundle generated cleanly (0 errors).
+### 4. Verified Test Evidence & Commands
+- `npm run test:client`:
+  - **50 tests passing, 0 failing, 0 skipped** (duration: 891ms).
+  - Validated candidate ranking (`normalizeForMatch`, `scoreTitleMatch`, `rankTitleCandidates`), series episode indexing (`hostLinkIndexForEpisode`, `pickCandidateForEpisode`), HTTP 404 diagnosis, HTML vs JSON responses, CORS network failures, AbortSignal handling, dynamic URL resolution with fallback, and strict test-fixture policy.
+- `npm run build`:
+  - Production client bundle built cleanly in 290ms without errors.
 - `node scripts/verify-client-mediabunny.mjs`:
-  - Cinemeta Home Rows: 11 rows fetched directly.
-  - Search: Movie "Inception" (10 results), Series "Breaking Bad" (10 results).
-  - Detail: "Inception" (148 min, rating 8.8), "Breaking Bad" (62 episodes, S1E1).
-  - MediaBunny Audio Discovery: Detected Matroska container with Track 2 (English, AAC) and Track 3 (Spanish, AAC).
-  - MediaBunny Audio Switching: Remuxed with Track 2 (2,804,000 bytes MP4) and Track 3 (2,803,707 bytes MP4), verified single switched audio stream.
-  - VegaMovies Resolution: Accurately diagnosed `http_error` (HTTP 404 Not Found), `invalid_response`, and `cors_blocked` distinctly.
-  - Zero runtime `/api/*` references in client source files verified.
+  - [1/6] Cinemeta Home Rows: 11 rows fetched directly.
+  - [2/6] Search: Movie "Inception" (10 results), Series "Breaking Bad" (10 results).
+  - [3/6] Detail metadata: "Inception" (148 min, 8.8 rating), "Breaking Bad" (62 episodes).
+  - [4/6] MediaBunny audio-track discovery: Discovered Track 2 (English, AAC) & Track 3 (Spanish, AAC) from MKV container.
+  - [5/6] MediaBunny audio switching: Remuxed Track 2 (2,804,000 bytes MP4) & Track 3 (2,803,707 bytes MP4); verified switched MP4 has 1 audio track.
+  - [6/6] VegaMovies resolution: Correctly reported HTTP 404 and CORS boundary diagnostics.
+  - [7/7] Zero runtime `/api/*` references in client source verified.
+- `packages/server/` integrity: Completely untouched.
+
+### 5. Architectural Verdict: Outcome B (Provider Blocked Under Browser-Only Constraints)
+- **Status**: Outcome B.
+- **What Works**:
+  - Full client-side catalog navigation, search, and detail modal via Cinemeta/Kitsu.
+  - Fixed Metahub poster image CDN routing.
+  - MediaBunny client-side demuxing, multi-audio discovery, and dynamic track switching on playable media fixtures.
+  - Explicit test fixture playback with visible `[TEST MODE]` indicator.
+  - Strict compliance with no silent fixture fallbacks, no iframe embeds, no public CORS proxies, and no server runtime calls.
+- **What Fails**:
+  - VegaMovies direct browser stream resolution fails because `https://1vegamovies.baby/search.php` returns HTTP 404 and lacks CORS headers, causing browser `fetch()` to reject with `TypeError: Failed to fetch`.
+- **Minimum Architectural Change Needed for Real Playback**:
+  - The provider target must either send `Access-Control-Allow-Origin: *` headers, or the application must route stream resolution requests through an authorized CORS-enabling proxy / backend service (which is currently disallowed under the strict browser-only runtime constraint).
 
 
 ## Multi-provider search, search-result details, and real playback (verified)

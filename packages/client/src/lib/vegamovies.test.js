@@ -13,7 +13,8 @@ import {
   episodeFromUrl,
   pickCandidateForEpisode,
   hostLinkIndexForEpisode,
-  resolveVegaStream
+  resolveVegaStream,
+  getVegaBaseUrl
 } from "../providers/vegamovies.js";
 import { createStream } from "../api.js";
 
@@ -198,6 +199,33 @@ test("resolveVegaStream respects AbortSignal cleanly", async () => {
     },
     { name: "AbortError" }
   );
+});
+
+test("getVegaBaseUrl fetches dynamic URL from urls.json and falls back on error", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    // 1. Success case
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ vegamovies: "https://dynamic.vegamovies.test" })
+    });
+    const url1 = await getVegaBaseUrl();
+    assert.equal(url1, "https://dynamic.vegamovies.test");
+
+    // 2. Failure case falls back to FALLBACK_BASE
+    globalThis.fetch = async () => { throw new Error("Network down"); };
+    const url2 = await getVegaBaseUrl();
+    assert.equal(url2, "https://vegamovies.gallery");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("live integration test: live VegaMovies endpoint returns HTTP 404 and is blocked from browser scraping", async () => {
+  // Uses unmocked real live fetch to observe live behavior on Vincenzo
+  const res = await resolveVegaStream({ title: "Vincenzo", year: 2021, type: "series" });
+  assert.ok(res.status === "http_error" || res.status === "cors_blocked");
+  assert.ok(res.error, "Must report precise diagnostic reason");
 });
 
 test("createStream rejects real provider failure and requires explicit test mode for fixture", async () => {
