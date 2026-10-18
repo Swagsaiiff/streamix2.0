@@ -51,6 +51,14 @@ function localCorsProxyPlugin() {
 
       for (const [key, val] of upstream.headers) {
         const lower = key.toLowerCase();
+        // Never forward compressed content-length or content-encoding because Node fetch()
+        // automatically decompresses the body, making the upstream content-length too short!
+        if (lower === "content-length" && upstream.headers.get("content-encoding")) {
+          continue;
+        }
+        if (lower === "content-encoding") {
+          continue;
+        }
         if (
           [
             "content-type",
@@ -63,6 +71,7 @@ function localCorsProxyPlugin() {
           responseHeaders[key] = val;
         }
       }
+
 
       res.writeHead(upstream.status, responseHeaders);
 
