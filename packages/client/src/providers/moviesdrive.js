@@ -180,6 +180,9 @@ export async function resolveFinalMediaUrl(startUrl, { signal } = {}) {
   if (currentUrl.includes("link=")) {
     return decodeURIComponent(currentUrl.split("link=")[1]);
   }
+  if (currentUrl.includes("pixeldrain.") && currentUrl.includes("/u/")) {
+    return currentUrl.replace("/u/", "/api/file/");
+  }
   return currentUrl;
 }
 
@@ -302,10 +305,10 @@ export async function resolveMoviesDriveStream({
 
   const genHtml = await genRes.text();
   const serverBtn =
-    genHtml.match(
-      /href=["'](https?:\/\/[^"']*(?:cloudflarestorage\.com|pixeldrain\.(?:dev|com)\/u\/|googleusercontent\.com|gpdl\.hubcloud|dl\.php\?link=)[^"']*)["']/i
-    ) ||
-    genHtml.match(/href=["'](https?:\/\/[^"']*(?:pixel\.hubcloud|snvhost)[^"']*[?&](?:id|link)=[^"']*)["']/i);
+    genHtml.match(/href=["'](https?:\/\/[^"']*pixel\.hubcloud[^"']*[?&](?:id|link)=[^"']*)["']/i) ||
+    genHtml.match(/href=["'](https?:\/\/[^"']*(?:cloudflarestorage\.com|googleusercontent\.com|gpdl\.hubcloud|dl\.php\?link=)[^"']*)["']/i) ||
+    genHtml.match(/href=["'](https?:\/\/[^"']*(?:snvhost)[^"']*[?&](?:id|link)=[^"']*)["']/i) ||
+    genHtml.match(/href=["'](https?:\/\/[^"']*pixeldrain\.(?:dev|com)\/(?:api\/file\/|u\/)[^"']*)["']/i);
 
   if (!serverBtn) {
     return {
