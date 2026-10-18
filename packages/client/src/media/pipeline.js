@@ -70,7 +70,7 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
   let input;
   let sourceRef;
   try {
-    sourceRef = new UrlSource(absoluteUrl);
+    sourceRef = new UrlSource(absoluteUrl, { maxCacheSize: Infinity });
     input = new Input({
       source: sourceRef,
       formats: ALL_FORMATS

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { Readable } from "node:stream";
 
 function localCorsProxyPlugin() {
   const handler = async (req, res) => {
@@ -7,7 +8,8 @@ function localCorsProxyPlugin() {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "*",
-        "Access-Control-Allow-Headers": "*"
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "86400"
       });
       res.end();
       return;
@@ -22,26 +24,53 @@ function localCorsProxyPlugin() {
     }
 
     try {
+      const forwardHeaders = {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        Referer: new URL(targetUrl).origin + "/"
+      };
+
+      if (req.headers.range) {
+        forwardHeaders.range = req.headers.range;
+      }
+      if (req.headers.accept) {
+        forwardHeaders.accept = req.headers.accept;
+      }
+
       const upstream = await fetch(targetUrl, {
         method: req.method,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-          Referer: new URL(targetUrl).origin + "/"
-        }
+        headers: forwardHeaders
       });
 
-      const headers = {
+      const responseHeaders = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "*",
-        "Access-Control-Allow-Headers": "*"
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "*"
       };
-      const ct = upstream.headers.get("content-type");
-      if (ct) headers["Content-Type"] = ct;
 
-      res.writeHead(upstream.status, headers);
-      const buf = await upstream.arrayBuffer();
-      res.end(Buffer.from(buf));
+      for (const [key, val] of upstream.headers) {
+        const lower = key.toLowerCase();
+        if (
+          [
+            "content-type",
+            "content-length",
+            "content-range",
+            "accept-ranges",
+            "content-disposition"
+          ].includes(lower)
+        ) {
+          responseHeaders[key] = val;
+        }
+      }
+
+      res.writeHead(upstream.status, responseHeaders);
+
+      if (upstream.body) {
+        Readable.fromWeb(upstream.body).pipe(res);
+      } else {
+        res.end();
+      }
     } catch (err) {
       res.writeHead(502, {
         "Access-Control-Allow-Origin": "*",
