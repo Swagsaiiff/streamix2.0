@@ -7,11 +7,15 @@
  */
 
 export function getCorsProxyBase() {
-  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_CORS_PROXY) {
-    return String(import.meta.env.VITE_CORS_PROXY).trim();
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_CORS_PROXY !== undefined) {
+    const val = String(import.meta.env.VITE_CORS_PROXY).trim();
+    if (val) return val;
   }
   if (typeof process !== "undefined" && process.env?.VITE_CORS_PROXY) {
     return String(process.env.VITE_CORS_PROXY).trim();
+  }
+  if (typeof window !== "undefined") {
+    return "/cors-proxy?url=";
   }
   return "";
 }
