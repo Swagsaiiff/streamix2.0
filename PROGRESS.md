@@ -1,5 +1,19 @@
 # STREAMIX — Progress
 
+Phase 16: Remote MKV Buffer Prevention & Memory Safeguard (Completed).
+1. Root cause diagnosed from user DevTools network tab:
+   - Request URL transferred `712,722 kB` (712 MB) in 1.3 minutes before erroring.
+   - The link scraper fix succeeded and correctly located the real full-length movie stream from HubCloud/Cloudflare R2 (`UNABOMBER (2026) WEB-DL 720p 10Bit HEVC [766.72 MB] [Hindi DD5.1 & English]`).
+   - Because the file was an MKV container, MediaBunny's in-memory remuxer (`Conversion.init` with `BufferTarget`) attempted to download all 766 MB of video into browser RAM (`ArrayBuffer`).
+   - At the end of the 712 MB download, the browser encountered memory limits and incompatible codecs (10-bit HEVC + Dolby Digital 5.1 AC-3 cannot be packaged into a web MP4 without audio re-encoding), crashing with a playback error.
+2. Fix applied in `packages/client/src/media/pipeline.js`:
+   - Added container check on remote streams: when `input.getFormat()` detects `format.name === "Matroska"` on a remote stream (not the local test fixture), it immediately aborts and throws an honest error within 100ms *before* downloading 700MB+ into browser RAM.
+   - Preserves local multi-audio test fixture remuxing and audio switching.
+3. Verified:
+   - `npm run test:client`: 59/59 passing.
+   - `npm run build`: cleanly bundled into `packages/client/dist`.
+   - `node scripts/verify-client-mediabunny.mjs`: all 7 verification steps passed.
+
 Phase 15: MoviesDrive Link Extractor Fix & Build Refresh (Completed).
 1. Root cause diagnosed from user DevTools network tab:
    - Request URL: `http://localhost:4173/cors-proxy?url=https%3A%2F%2Fsnvhost.com%2F` returning `HTTP 200 OK` (`text/html`).

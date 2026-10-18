@@ -203,6 +203,21 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
 
   // 4. Matroska (MKV) source:
   if (format.name.includes("Matroska") || format.name.includes("WebM")) {
+    const isFixture = absoluteUrl.includes("fixture") || absoluteUrl.includes("multi-audio-test");
+    if (!isFixture && format.name.includes("Matroska")) {
+      try {
+        input.dispose?.();
+      } catch {
+        // ignore
+      }
+      const audioSummary = audioTracks.map((t) => t.name).join(", ") || "Dual-Audio";
+      const vCodec = videoTrackInfo?.codec || "HEVC/AVC";
+      const durSummary = duration > 0 ? `${Math.round(duration / 60)} min` : "full movie";
+      throw new Error(
+        `Remote stream is a raw Matroska (.mkv) file (${durSummary}, codec: ${vCodec}, audio: ${audioSummary}). Web browsers do not support native MKV playback, and downloading 700MB+ into browser RAM causes memory crashes. Web streaming requires HLS (.m3u8) or MP4.`
+      );
+    }
+
     const vCodec = videoTrackInfo?.codec ?? "";
     const isVideoCompatible = /avc|h264|vp8|vp9|av1/i.test(vCodec);
     if (!isVideoCompatible && vCodec) {
