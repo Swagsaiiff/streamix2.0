@@ -1,12 +1,18 @@
 # STREAMIX — Progress
 
-Phase 13: MediaBunny Pipeline Graceful Fallback & Proxy Range Slicing (Completed).
-Diagnosed root causes for `Media inspection failed: Input has an unsupported or unrecognizable format`:
-1. Upstream Google Video Servers (`video-downloads.googleusercontent.com`) serve Matroska/HEVC media with `HTTP 200` without answering byte-range requests directly. When MediaBunny probed the container, the lack of `206 Partial Content` caused buffer eviction in sequential mode.
-2. Added HTTP Range slicing in `packages/client/vite.config.js`: when a client sends `Range: bytes=start-end` and upstream returns `200`, the proxy simulates `206 Partial Content` with `Accept-Ranges: bytes`, `Content-Range`, and `Content-Length`, piping only the requested range and terminating cleanly.
-3. Made `packages/client/src/media/pipeline.js` resilient: when MediaBunny format detection, track reading, or remuxing cannot execute (such as 10-bit HEVC x265 or large MKV files), it never throws a fatal error—it gracefully falls back to direct browser native playback (`mode: "direct"`), allowing native browser hardware decoding to play the video.
-4. Added native video decoding error listener in `packages/client/src/components/Player.jsx`.
-5. Verified: `npm run test:client` (59/59 passing), `npm run build` (built cleanly), `node scripts/verify-client-mediabunny.mjs` (all checks passing).
+Phase 15: MoviesDrive Link Extractor Fix & Build Refresh (Completed).
+1. Root cause diagnosed from user DevTools network tab:
+   - Request URL: `http://localhost:4173/cors-proxy?url=https%3A%2F%2Fsnvhost.com%2F` returning `HTTP 200 OK` (`text/html`).
+   - The regex in `packages/client/src/providers/moviesdrive.js` (`/(?:pixel\.hubcloud|snvhost)/`) matched the sponsor website homepage `https://snvhost.com/` present in the page footer on `gamerxyt.com` instead of the actual media download button.
+   - Chrome's HTML5 `<video>` engine received HTML webpage text instead of video stream data, triggering `PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed`.
+2. Fix applied in `packages/client/src/providers/moviesdrive.js`:
+   - Updated button extraction to strictly target direct storage/download endpoints (`cloudflarestorage.com`, `pixeldrain.(dev|com)/u/`, `googleusercontent.com`, `gpdl.hubcloud`, `dl.php?link=`, or query params containing `id=`/`link=`).
+   - Added validation rejecting bare domain homepages without paths/queries (e.g. `https://snvhost.com/`).
+   - Rebuilt the client bundle (`npm run build`) so the running preview server (`vite preview`) serves the corrected scraper.
+3. Verified:
+   - `npm run test:client`: 59/59 passing.
+   - `npm run build`: cleanly bundled into `packages/client/dist`.
+   - `node scripts/verify-client-mediabunny.mjs`: all 7 verification steps passed.
 
 Phase 14: Option A Enforcement — Browser Web-Streaming (HLS/MP4) (Completed).
 1. Diagnosed `PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed` in Chrome: Chromium's HTML5 `<video>` engine does not support raw Matroska (`.mkv`) containers. When pirate torrent lockers serve direct `.mkv` downloads, passing them to `<video src>` triggers an instant demuxer failure.

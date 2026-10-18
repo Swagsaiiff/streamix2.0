@@ -301,7 +301,11 @@ export async function resolveMoviesDriveStream({
   }
 
   const genHtml = await genRes.text();
-  const serverBtn = genHtml.match(/href=["'](https?:\/\/[^"']*(?:pixel\.hubcloud|snvhost)[^"']*)["']/i);
+  const serverBtn =
+    genHtml.match(
+      /href=["'](https?:\/\/[^"']*(?:cloudflarestorage\.com|pixeldrain\.(?:dev|com)\/u\/|googleusercontent\.com|gpdl\.hubcloud|dl\.php\?link=)[^"']*)["']/i
+    ) ||
+    genHtml.match(/href=["'](https?:\/\/[^"']*(?:pixel\.hubcloud|snvhost)[^"']*[?&](?:id|link)=[^"']*)["']/i);
 
   if (!serverBtn) {
     return {
@@ -320,8 +324,21 @@ export async function resolveMoviesDriveStream({
     };
   }
 
+  // Disallow bare domain landing pages (like https://snvhost.com/)
+  try {
+    const parsed = new URL(finalMediaUrl);
+    if ((parsed.pathname === "/" || parsed.pathname === "") && !parsed.search) {
+      return {
+        status: "unsupported_media",
+        error: `Resolved URL is a website homepage ("${finalMediaUrl}"), not a video stream.`
+      };
+    }
+  } catch {
+    // ignore
+  }
+
   const isHls = /\.m3u8/i.test(finalMediaUrl);
-  const isMkv = /\.mkv/i.test(finalMediaUrl);
+  const isMkv = /\.mkv/i.test(finalMediaUrl) || /filename=[^&]*\.mkv/i.test(finalMediaUrl);
 
   return {
     status: "provider_stream",
