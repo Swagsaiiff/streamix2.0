@@ -8,9 +8,15 @@ Diagnosed root causes for `Media inspection failed: Input has an unsupported or 
 4. Added native video decoding error listener in `packages/client/src/components/Player.jsx`.
 5. Verified: `npm run test:client` (59/59 passing), `npm run build` (built cleanly), `node scripts/verify-client-mediabunny.mjs` (all checks passing).
 
+Phase 14: Option A Enforcement — Browser Web-Streaming (HLS/MP4) (Completed).
+1. Diagnosed `PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed` in Chrome: Chromium's HTML5 `<video>` engine does not support raw Matroska (`.mkv`) containers. When pirate torrent lockers serve direct `.mkv` downloads, passing them to `<video src>` triggers an instant demuxer failure.
+2. Enforced Option A in `packages/client/src/api.js`: only browser-compatible web streams (HLS `.m3u8` or MP4 `.mp4`) are accepted for direct streaming. Raw `.mkv` file-locker downloads are rejected with an explicit, honest explanation requiring HLS/MP4 web streams.
+3. Updated `packages/client/src/media/pipeline.js` to ensure raw `.mkv` files are never passed to the browser's native decoder.
+4. Verified: `npm run test:client` (59/59 passing), `npm run build` (built cleanly), `node scripts/verify-client-mediabunny.mjs` (all checks passing).
+
 ## Current phase
 
-Phase 13: MediaBunny Pipeline Graceful Fallback & Proxy Range Slicing (Completed).
+Phase 14: Option A Enforcement — Browser Web-Streaming (HLS/MP4) (Completed).
 
 
 

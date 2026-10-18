@@ -115,10 +115,15 @@ export async function createStream(type, id, { lang, provider, season, episode, 
         });
 
         if (mdResult.status === "provider_stream" && mdResult.url) {
-          sourceUrl = mdResult.url;
-          sourceStatus = "provider_stream";
-          sourceProvider = mdResult.sourceProvider || "MoviesDrive";
-          streamNote = mdResult.note;
+          const isMkv = /\.mkv(\?|$)/i.test(mdResult.url) || mdResult.mediaType === "mkv";
+          if (isMkv) {
+            moviesDriveError = "MoviesDrive returned a raw Matroska (.mkv) file. Web browsers require HLS (.m3u8) or MP4 web streams.";
+          } else {
+            sourceUrl = mdResult.url;
+            sourceStatus = "provider_stream";
+            sourceProvider = mdResult.sourceProvider || "MoviesDrive";
+            streamNote = mdResult.note;
+          }
         } else {
           moviesDriveError = mdResult.error || `Title "${resolvedTitle}" is not available in MoviesDrive's catalog.`;
         }

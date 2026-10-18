@@ -96,7 +96,11 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     if (isCors) {
       throw new Error(`CORS error: Direct browser read of "${sourceUrl}" was blocked by browser CORS restrictions on the remote host.`);
     }
-    // Graceful fallback: If MediaBunny format inspection fails on remote stream, fall back to direct browser playback
+    const isMkv = /\.mkv(\?|$)/i.test(sourceUrl);
+    if (isMkv) {
+      throw new Error(`Matroska (.mkv) container cannot be opened directly by browser HTML5 media engine. Web browsers require HLS (.m3u8) or MP4.`);
+    }
+    // Graceful fallback: If MediaBunny format inspection fails on remote MP4/WebM stream, fall back to direct browser playback
     return {
       mode: "direct",
       format: "direct",
@@ -113,6 +117,10 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
   checkAbort(signal);
 
   if (!format) {
+    const isMkv = /\.mkv(\?|$)/i.test(sourceUrl);
+    if (isMkv) {
+      throw new Error(`Matroska (.mkv) container cannot be opened directly by browser HTML5 media engine. Web browsers require HLS (.m3u8) or MP4.`);
+    }
     return {
       mode: "direct",
       format: "direct",
