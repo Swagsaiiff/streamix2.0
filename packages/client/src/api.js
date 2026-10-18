@@ -1,53 +1,108 @@
-const HOME_ROWS = ["trending", "popular-movies", "new-releases", "top-rated", "action", "comedy", "horror", "popular-series", "action-series", "anime-airing", "anime-trending"];
+import { buildHomeSections, searchCinemeta, getCinemetaDetails } from "./providers/cinemeta.js";
+import { resolveVegaStream } from "./providers/vegamovies.js";
+import { createMediaPipeline } from "./media/pipeline.js";
 
-async function request(path, options = {}) {
-  const res = await fetch(path, options);
-  const body = await res.json();
-  if (!res.ok) {
-    throw new Error(body.message || `Request failed with status ${res.status}`);
-  }
-  return body;
+const FIXTURE_FALLBACK_URL = "/fixtures/multi-audio-test.mkv";
+
+export async function fetchHomeSections(options = {}) {
+  return await buildHomeSections(options?.signal);
 }
 
-export async function fetchHomeSections() {
+export async function fetchSearch(q, options = {}) {
+  const items = await searchCinemeta(q, options?.signal);
+  return {
+    query: q,
+    count: items.length,
+    items
+  };
+}
+
+export async function fetchDetail(type, id, options = {}) {
+  const item = await getCinemetaDetails(type, id, options?.signal);
+  return { item };
+}
+
+export async function createStream(type, id, { lang, provider, season, episode, title, year, onStatus, ...options } = {}) {
+  let sourceUrl = null;
+  let sourceStatus = "provider_stream";
+  let streamNote = null;
+  let sourceProvider = provider ?? "MediaBunny";
+
+  // If a title was not provided directly in options, look up detail to get real title & year
+  let resolvedTitle = title;
+  let resolvedYear = year;
+  if (!resolvedTitle) {
+    try {
+      const detail = await getCinemetaDetails(type, id, options?.signal);
+      resolvedTitle = detail.title;
+      resolvedYear = detail.year;
+    } catch {
+      resolvedTitle = id;
+    }
+  }
+
+  // Attempt real VegaMovies resolution client-side
   try {
-    const data = await request("/api/home");
-    return data.rows.map((row) => ({ key: row.key, data: row }));
-  } catch {
-    const results = await Promise.allSettled(
-      HOME_ROWS.map((key) =>
-        request(`/api/home/${key}`).then((data) => {
-          const row = Array.isArray(data.rows) ? data.rows[0] : data;
-          return { key, data: { ...row, key } };
-        })
-      )
-    );
-    const ok = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
-    return ok;
+    const vegaResult = await resolveVegaStream({
+      title: resolvedTitle,
+      year: resolvedYear,
+      type,
+      season,
+      episode,
+      signal: options?.signal
+    });
+
+    if (vegaResult.status === "provider_stream" && vegaResult.url) {
+      sourceUrl = vegaResult.url;
+      sourceStatus = "provider_stream";
+      sourceProvider = "VegaMovies";
+      streamNote = vegaResult.note;
+    } else {
+      // Direct VegaMovies scraping failed (e.g. CORS restriction on third-party host)
+      // Fall back honestly to the multi-audio test fixture
+      sourceUrl = FIXTURE_FALLBACK_URL;
+      sourceStatus = "fixture_fallback";
+      streamNote = vegaResult.error
+        ? `TEST MODE: ${vegaResult.error} — Playing test fixture with MediaBunny.`
+        : `TEST MODE: VegaMovies match not playable — Playing test fixture with MediaBunny.`;
+    }
+  } catch (err) {
+    sourceUrl = FIXTURE_FALLBACK_URL;
+    sourceStatus = "fixture_fallback";
+    streamNote = `TEST MODE: Direct resolution error (${err.message}) — Playing test fixture with MediaBunny.`;
   }
+
+  onStatus?.("inspecting", "Inspecting media client-side with MediaBunny...");
+
+  // Initialize MediaBunny playback pipeline
+  const pipeline = await createMediaPipeline({
+    sourceUrl,
+    preferredLang: lang,
+    signal: options?.signal,
+    onProgress: (status, message) => onStatus?.(status, message)
+  });
+
+  return {
+    sessionId: `mb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    pipeline,
+    provider: { name: sourceProvider, resolution: sourceStatus },
+    resolution: { status: sourceStatus },
+    sourceStatus,
+    sourceProvider,
+    status: "ready",
+    streamMode: pipeline.mode,
+    playlistUrl: pipeline.playbackUrl,
+    playbackUrl: pipeline.playbackUrl,
+    audioTracks: pipeline.audioTracks,
+    activeTrack: pipeline.activeTrack,
+    note: streamNote,
+    title: resolvedTitle,
+    year: resolvedYear,
+    switchAudioTrack: pipeline.switchAudioTrack,
+    destroy: pipeline.destroy
+  };
 }
 
-export function fetchSearch(q, options = {}) {
-  return request(`/api/search?q=${encodeURIComponent(q)}`, options);
-}
-
-export function fetchDetail(type, id, { provider, ...options } = {}) {
-  const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
-  return request(`/api/detail/${type}/${encodeURIComponent(id)}${query}`, options);
-}
-
-export function createStream(type, id, { lang, provider, season, episode, ...options } = {}) {
-  const base = `/api/stream/${type}/${encodeURIComponent(id)}`;
-  const params = new URLSearchParams();
-  if (lang) params.set("lang", lang);
-  if (provider) params.set("provider", provider);
-  if (season != null) params.set("season", String(season));
-  if (episode != null) params.set("episode", String(episode));
-  const query = params.toString();
-  const path = query ? `${base}?${query}` : base;
-  return request(path, { method: "POST", ...options });
-}
-
-export function cleanupStream(sessionId) {
-  return request(`/api/stream/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => null);
+export function cleanupStream(_sessionId) {
+  return Promise.resolve({ status: "cleaned" });
 }

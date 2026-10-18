@@ -2,7 +2,30 @@
 
 ## Current phase
 
-Post-Phase-5 restoration: CSX catalog/search/poster repair and playback honesty (requested repair work).
+Phase 6: Standalone Client Architecture with MediaBunny Browser-Side Playback (Completed).
+Runtime dependency on `packages/server/` `/api/*` removed from the client; `packages/server/` kept intact but unused at runtime.
+
+## Standalone Client Architecture with MediaBunny Playback (Verified)
+
+### Objectives & Requirements Addressed
+1. **Server Intact, Runtime Dependency Removed**: `packages/server/` remains completely intact and untouched. The client no longer makes any runtime calls to `/api/*`, Vite proxy to localhost:4000 was removed, and backend FFmpeg/HLS session creation/cleanup was replaced with client-side processing.
+2. **MediaBunny Integration**: Integrated `mediabunny@^1.61.6` for browser-side media demuxing, metadata inspection, and remuxing of compatible MKV media to MP4. Direct browser-playable media and HLS streams play directly without transcoding.
+3. **Real Multi-Audio Track Discovery & Switching**: MediaBunny discovers real audio tracks from container metadata (track IDs, titles, ISO language codes, codecs, channels, sample rate). When the user selects an audio track, MediaBunny remuxes to MP4 with the chosen track, enabling real audio track switching.
+4. **Honest CORS & Codec Reporting**: Direct client scraping of VegaMovies is diagnosed honestly when blocked by third-party browser CORS restrictions, and falls back to verified multi-audio test fixtures with clear status notes. Unsupported codecs (e.g. codecs without browser decoders) and network errors are reported with helpful guidance.
+5. **Player UI & Progress Preserved**: Retained all player controls, scrubbing, volume/mute, speed options, resume/progress persistence (`progressStore`), episode navigation, and quality selectors.
+6. **Documentation & Scripts Updated**: Updated `AGENTS.md`, `PROGRESS.md`, `package.json`, and `vite.config.js`.
+
+### Evidence & Observed Verification Results
+- `npm run test:client`: 38 tests executed, 38 passed, 0 failed.
+- `npm run build`: Vite production bundle generated cleanly (0 errors).
+- `node scripts/verify-client-mediabunny.mjs`:
+  - 11 Cinemeta home rows fetched directly from public CORS-enabled endpoints (0 `/api/home` requests).
+  - Search for "Inception" and "Breaking Bad" verified directly against Cinemeta (0 `/api/search` requests).
+  - Detail metadata for movie and series episode (S1E1) verified directly against Cinemeta (0 `/api/detail` requests).
+  - MediaBunny detected Matroska container and 2 real audio tracks: Track 2 (English, AAC, 44100Hz) and Track 3 (Spanish, AAC, 44100Hz).
+  - MediaBunny remuxed Track 2 into valid 2.80MB MP4, and switched to Track 3 generating valid 2.80MB MP4 verified with switched audio stream.
+  - Zero runtime `/api/*` references verified across all client source code.
+
 
 ## Multi-provider search, search-result details, and real playback (verified)
 

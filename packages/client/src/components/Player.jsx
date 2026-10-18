@@ -43,6 +43,7 @@ export default function Player({ item, onClose, onProgress }) {
   const containerRef = useRef(null);
   const hlsRef = useRef(null);
   const sessionRef = useRef(null);
+  const pipelineRef = useRef(null);
   const hideTimerRef = useRef(null);
   const saveTimerRef = useRef(0);
   const currentRef = useRef(item);
@@ -53,6 +54,7 @@ export default function Player({ item, onClose, onProgress }) {
   const [current, setCurrent] = useState(item);
   const [attempt, setAttempt] = useState(0);
   const [phase, setPhase] = useState("resolving");
+  const [loadingMessage, setLoadingMessage] = useState("Resolving stream and preparing MediaBunny playback...");
   const [error, setError] = useState(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -133,29 +135,35 @@ export default function Player({ item, onClose, onProgress }) {
 
     async function start() {
       setPhase("resolving");
+      setLoadingMessage("Resolving stream and preparing MediaBunny playback...");
       setError(null);
       setEnded(false);
       setResumedFrom(null);
       try {
-        const [stream, hlsModule] = await Promise.all([
-          createStream(playItem.type, playItem.id, {
-            signal: controller.signal,
-            lang: preferredLang || undefined,
-            provider: playItem.provider,
-            season: playItem.season,
-            episode: playItem.episode
-          }),
-          import("hls.js")
-        ]);
-        const Hls = hlsModule.default;
+        const stream = await createStream(playItem.type, playItem.id, {
+          signal: controller.signal,
+          lang: preferredLang || undefined,
+          provider: playItem.provider,
+          season: playItem.season,
+          episode: playItem.episode,
+          title: playItem.title,
+          year: playItem.year,
+          onStatus: (_st, msg) => {
+            if (!cancelled) setLoadingMessage(msg);
+          }
+        });
+
         if (cancelled) {
-          cleanupStream(stream.sessionId);
+          stream?.destroy?.();
+          cleanupStream(stream?.sessionId);
           return;
         }
+
+        pipelineRef.current = stream;
         sessionRef.current = stream.sessionId;
         setSourceNote(stream.note ?? null);
-        setSourceStatus(stream.resolution?.status ?? null);
-        setSourceProvider(stream.provider?.name ?? null);
+        setSourceStatus(stream.resolution?.status ?? stream.sourceStatus ?? null);
+        setSourceProvider(stream.provider?.name ?? stream.sourceProvider ?? "MediaBunny");
 
         const video = videoRef.current;
         if (!video) return;
@@ -171,70 +179,93 @@ export default function Player({ item, onClose, onProgress }) {
         savedResumeRef.current = saved;
         resumeAppliedRef.current = false;
 
-        if (!Hls.isSupported()) {
-          if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            video.src = stream.playlistUrl;
-            video.addEventListener(
-              "loadedmetadata",
-              () => {
-                setPhase("ready");
-              },
-              { once: true }
-            );
-            return;
-          }
-          throw new Error("HLS playback is not supported in this browser");
-        }
+        const isHls = stream.streamMode === "hls" || String(stream.playlistUrl || "").includes(".m3u8");
 
-        const hls = new Hls({ enableWorker: true });
-        hlsRef.current = hls;
-        if (import.meta.env.DEV) window.__streamixHls = hls;
-        hls.loadSource(stream.playlistUrl);
-        hls.attachMedia(video);
-
-        const syncAudio = (applyPreference = false) => {
-          const tracks = hls.audioTracks ?? [];
-          setAudioTracks(tracks);
-          if (applyPreference && preferredLang) {
-            const match = tracks.find((t) => t.lang === preferredLang);
-            if (match) hls.audioTrack = match.id;
-          }
-        };
-        const syncLevels = () => {
-          const list = hls.levels ?? [];
-          setLevels(list);
-          setActiveLevel(currentQualityValue(hls));
-        };
-
-        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => syncAudio(true));
-        hls.on(Hls.Events.LEVEL_SWITCHED, () => syncLevels());
-        hls.on(Hls.Events.LEVEL_LOADED, () => syncLevels());
-        hls.on(Hls.Events.LEVEL_UPDATED, () => syncLevels());
-        hls.on(Hls.Events.LEVELS_UPDATED, () => syncLevels());
-        hls.on(Hls.Events.MANIFEST_LOADED, () => syncLevels());
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (isHls) {
+          const hlsModule = await import("hls.js");
+          const Hls = hlsModule.default;
           if (cancelled) return;
-          syncAudio(true);
-          syncLevels();
-          setPhase("ready");
-          video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-        });
 
-        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => setActiveTrack(data.id));
-
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (cancelled) return;
-          if (data.fatal) {
-            setError(`Playback failed: ${data.details ?? data.type}`);
-            setPhase("error");
-            try {
-              hls.destroy();
-            } catch {
-              // already destroyed
+          if (!Hls.isSupported()) {
+            if (video.canPlayType("application/vnd.apple.mpegurl")) {
+              video.src = stream.playlistUrl;
+              video.addEventListener(
+                "loadedmetadata",
+                () => {
+                  setPhase("ready");
+                },
+                { once: true }
+              );
+              return;
             }
+            throw new Error("HLS playback is not supported in this browser");
           }
-        });
+
+          const hls = new Hls({ enableWorker: true });
+          hlsRef.current = hls;
+          if (import.meta.env.DEV) window.__streamixHls = hls;
+          hls.loadSource(stream.playlistUrl);
+          hls.attachMedia(video);
+
+          const syncAudio = (applyPreference = false) => {
+            const tracks = hls.audioTracks ?? [];
+            setAudioTracks(tracks);
+            if (applyPreference && preferredLang) {
+              const match = tracks.find((t) => t.lang === preferredLang);
+              if (match) hls.audioTrack = match.id;
+            }
+          };
+          const syncLevels = () => {
+            const list = hls.levels ?? [];
+            setLevels(list);
+            setActiveLevel(currentQualityValue(hls));
+          };
+
+          hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => syncAudio(true));
+          hls.on(Hls.Events.LEVEL_SWITCHED, () => syncLevels());
+          hls.on(Hls.Events.LEVEL_LOADED, () => syncLevels());
+          hls.on(Hls.Events.LEVEL_UPDATED, () => syncLevels());
+          hls.on(Hls.Events.LEVELS_UPDATED, () => syncLevels());
+          hls.on(Hls.Events.MANIFEST_LOADED, () => syncLevels());
+
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (cancelled) return;
+            syncAudio(true);
+            syncLevels();
+            setPhase("ready");
+            video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+          });
+
+          hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => setActiveTrack(data.id));
+
+          hls.on(Hls.Events.ERROR, (_event, data) => {
+            if (cancelled) return;
+            if (data.fatal) {
+              setError(`Playback failed: ${data.details ?? data.type}`);
+              setPhase("error");
+              try {
+                hls.destroy();
+              } catch {
+                // already destroyed
+              }
+            }
+          });
+        } else {
+          // MediaBunny or direct browser playback
+          setAudioTracks(stream.audioTracks ?? []);
+          setActiveTrack(stream.activeTrack ?? stream.audioTracks?.[0]?.id ?? null);
+          video.src = stream.playbackUrl;
+          video.load();
+          video.addEventListener(
+            "loadedmetadata",
+            () => {
+              if (cancelled) return;
+              setPhase("ready");
+              video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+            },
+            { once: true }
+          );
+        }
       } catch (err) {
         if (cancelled || err.name === "AbortError") return;
         setError(err.message || "Failed to resolve the stream");
@@ -255,6 +286,14 @@ export default function Player({ item, onClose, onProgress }) {
         // already destroyed
       }
       hlsRef.current = null;
+      if (pipelineRef.current?.destroy) {
+        try {
+          pipelineRef.current.destroy();
+        } catch {
+          // ignore
+        }
+      }
+      pipelineRef.current = null;
       if (sessionRef.current) cleanupStream(sessionRef.current);
       sessionRef.current = null;
     };
@@ -403,10 +442,34 @@ export default function Player({ item, onClose, onProgress }) {
     setRate(r);
   }, []);
 
-  const selectAudio = useCallback((id) => {
-    if (!hlsRef.current) return;
-    hlsRef.current.audioTrack = Number(id);
-    setActiveTrack(Number(id));
+  const selectAudio = useCallback(async (id) => {
+    const numId = Number(id);
+    setActiveTrack(numId);
+    if (hlsRef.current) {
+      hlsRef.current.audioTrack = numId;
+      return;
+    }
+    if (pipelineRef.current?.switchAudioTrack) {
+      const video = videoRef.current;
+      const currentPos = video?.currentTime || 0;
+      const wasPlaying = !video?.paused;
+      setSwitching(true);
+      setLoadingMessage("Switching audio track with MediaBunny...");
+      try {
+        const newUrl = await pipelineRef.current.switchAudioTrack(numId);
+        if (video) {
+          video.src = newUrl;
+          video.currentTime = currentPos;
+          if (wasPlaying) {
+            video.play().then(() => setPlaying(true)).catch(() => {});
+          }
+        }
+      } catch (err) {
+        setError(`Failed to switch audio track: ${err.message}`);
+      } finally {
+        setSwitching(false);
+      }
+    }
   }, []);
 
   const selectQuality = useCallback((value) => {
@@ -509,7 +572,7 @@ export default function Player({ item, onClose, onProgress }) {
       {(phase === "resolving" || switching) && (
         <div className="player-center">
           <div className="player-spinner" role="status" aria-label="Loading stream" />
-          <p className="player-center-text">Resolving stream and preparing HLS...</p>
+          <p className="player-center-text">{loadingMessage || "Resolving stream and preparing MediaBunny playback..."}</p>
         </div>
       )}
 
