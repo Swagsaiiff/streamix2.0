@@ -139,6 +139,16 @@ export default function App() {
     setPlayer({ ...item });
   }, []);
 
+  const playTestFixture = useCallback(() => {
+    openPlayer({
+      type: "movie",
+      id: "test-fixture",
+      title: "MediaBunny Multi-Audio Test Fixture",
+      provider: "Test Fixture",
+      isTestFixture: true
+    });
+  }, [openPlayer]);
+
   const closePlayer = useCallback(() => {
     setPlayer(null);
     refreshProgress();
@@ -234,6 +244,7 @@ export default function App() {
         onNavigate={handleNavigate}
         onSearch={handleSearch}
         searchState={searchState}
+        onTestPlay={playTestFixture}
       />
 
       {searchState !== "idle" && view === "search" ? (

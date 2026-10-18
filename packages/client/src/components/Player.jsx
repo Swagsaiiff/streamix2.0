@@ -458,13 +458,24 @@ export default function Player({ item, onClose, onProgress }) {
       try {
         const newUrl = await pipelineRef.current.switchAudioTrack(numId);
         if (video) {
+          const onMeta = () => {
+            if (Number.isFinite(currentPos) && currentPos > 0) {
+              try {
+                video.currentTime = currentPos;
+              } catch {
+                // ignore
+              }
+            }
+            if (wasPlaying) {
+              video.play().then(() => setPlaying(true)).catch(() => {});
+            }
+          };
+          video.addEventListener("loadedmetadata", onMeta, { once: true });
           video.src = newUrl;
-          video.currentTime = currentPos;
-          if (wasPlaying) {
-            video.play().then(() => setPlaying(true)).catch(() => {});
-          }
+          video.load();
         }
       } catch (err) {
+        if (err.name === "AbortError") return;
         setError(`Failed to switch audio track: ${err.message}`);
       } finally {
         setSwitching(false);
@@ -489,6 +500,19 @@ export default function Player({ item, onClose, onProgress }) {
   const retry = useCallback(() => {
     if (sessionRef.current) cleanupStream(sessionRef.current);
     sessionRef.current = null;
+    setAttempt((n) => n + 1);
+  }, []);
+
+  const playFixture = useCallback(() => {
+    if (sessionRef.current) cleanupStream(sessionRef.current);
+    sessionRef.current = null;
+    setCurrent({
+      type: "movie",
+      id: "test-fixture",
+      title: "MediaBunny Multi-Audio Test Fixture",
+      provider: "Test Fixture",
+      isTestFixture: true
+    });
     setAttempt((n) => n + 1);
   }, []);
 
@@ -582,7 +606,10 @@ export default function Player({ item, onClose, onProgress }) {
             <h2>Playback error</h2>
             <p>{error}</p>
             <div className="player-error-actions">
-              <button type="button" className="player-btn player-btn-primary" onClick={retry}>
+              <button type="button" className="player-btn player-btn-primary" onClick={playFixture}>
+                Play Test Fixture
+              </button>
+              <button type="button" className="player-btn" onClick={retry}>
                 Retry
               </button>
               <button type="button" className="player-btn" onClick={onClose}>

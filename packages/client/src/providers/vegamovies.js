@@ -189,6 +189,12 @@ export async function getVegaBaseUrl(signal) {
 }
 
 export async function resolveVegaStream({ title, year, type = "movie", season = null, episode = null, signal }) {
+  if (signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+
   let base;
   try {
     base = await getVegaBaseUrl(signal);
@@ -196,19 +202,32 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     base = FALLBACK_BASE;
   }
 
+  if (signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+
   const searchUrl = `${base}/search.php?q=${encodeURIComponent(title)}&page=1`;
   let searchJson;
   try {
     const res = await fetch(searchUrl, { signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      return {
+        status: "cors_blocked",
+        error: `VegaMovies resolution failed: "${searchUrl}" returned HTTP ${res.status}. The discovered VegaMovies domain does not host a working search index or permits browser cross-origin requests.`
+      };
+    }
     searchJson = await res.json();
   } catch (err) {
-    const isCors = err.name === "TypeError" || /cors|failed to fetch|network/i.test(err.message);
+    if (signal?.aborted || err.name === "AbortError") {
+      const abortErr = new Error("Aborted");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
     return {
       status: "cors_blocked",
-      error: isCors
-        ? `CORS policy restriction: Browser blocked direct fetch to ${base}. VegaMovies endpoints do not permit cross-origin browser access.`
-        : `Provider unreachable: ${err.message}`
+      error: `VegaMovies resolution unavailable: Direct browser fetch to "${searchUrl}" failed (${err.message}). VegaMovies endpoints do not send Access-Control-Allow-Origin headers required for browser-side requests.`
     };
   }
 
@@ -220,8 +239,8 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
   const match = items[0];
   try {
     const pageRes = await fetch(match.id, { signal });
+    if (!pageRes.ok) throw new Error(`HTTP ${pageRes.status}`);
     const pageHtml = await pageRes.text();
-    const linkPages = extractLinkPages(pageHtml, match.id);
     const mediaCandidates = extractDirectMediaUrls(pageHtml);
     if (mediaCandidates.length > 0) {
       const picked = pickCandidateForEpisode(mediaCandidates, { season, episode });
@@ -239,9 +258,14 @@ export async function resolveVegaStream({ title, year, type = "movie", season = 
     }
     return {
       status: "unsupported",
-      error: `VegaMovies match found but direct media stream extraction required cross-origin host unwrapping.`
+      error: `VegaMovies entry found for "${match.title}" but extracting the stream requires cross-origin third-party host unwrapping which is restricted in the browser.`
     };
   } catch (err) {
+    if (signal?.aborted || err.name === "AbortError") {
+      const abortErr = new Error("Aborted");
+      abortErr.name = "AbortError";
+      throw abortErr;
+    }
     return {
       status: "cors_blocked",
       error: `Browser CORS blocked reading VegaMovies page (${err.message})`

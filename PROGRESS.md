@@ -2,29 +2,44 @@
 
 ## Current phase
 
-Phase 6: Standalone Client Architecture with MediaBunny Browser-Side Playback (Completed).
-Runtime dependency on `packages/server/` `/api/*` removed from the client; `packages/server/` kept intact but unused at runtime.
+Phase 7: STREAMIX 2.0 Playback Failures Resolution & Honest Provider Reporting (Completed).
+Fixed `Output is not defined` runtime error in `pipeline.js`, diagnosed VegaMovies HTTP 404 / browser CORS limitation honestly, removed silent fallback to test fixture, added explicit test fixture player controls, and handled aborted requests cleanly.
 
-## Standalone Client Architecture with MediaBunny Playback (Verified)
+## Playback Failure Fixes & MediaBunny Pipeline Verification (Verified)
 
-### Objectives & Requirements Addressed
-1. **Server Intact, Runtime Dependency Removed**: `packages/server/` remains completely intact and untouched. The client no longer makes any runtime calls to `/api/*`, Vite proxy to localhost:4000 was removed, and backend FFmpeg/HLS session creation/cleanup was replaced with client-side processing.
-2. **MediaBunny Integration**: Integrated `mediabunny@^1.61.6` for browser-side media demuxing, metadata inspection, and remuxing of compatible MKV media to MP4. Direct browser-playable media and HLS streams play directly without transcoding.
-3. **Real Multi-Audio Track Discovery & Switching**: MediaBunny discovers real audio tracks from container metadata (track IDs, titles, ISO language codes, codecs, channels, sample rate). When the user selects an audio track, MediaBunny remuxes to MP4 with the chosen track, enabling real audio track switching.
-4. **Honest CORS & Codec Reporting**: Direct client scraping of VegaMovies is diagnosed honestly when blocked by third-party browser CORS restrictions, and falls back to verified multi-audio test fixtures with clear status notes. Unsupported codecs (e.g. codecs without browser decoders) and network errors are reported with helpful guidance.
-5. **Player UI & Progress Preserved**: Retained all player controls, scrubbing, volume/mute, speed options, resume/progress persistence (`progressStore`), episode navigation, and quality selectors.
-6. **Documentation & Scripts Updated**: Updated `AGENTS.md`, `PROGRESS.md`, `package.json`, and `vite.config.js`.
+### 1. Fix `Output is not defined` in `packages/client/src/media/pipeline.js`
+- **Root Cause**: `pipeline.js` instantiated `new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() })` but `Output` was omitted from the `mediabunny` imports statement, causing a runtime `ReferenceError: Output is not defined`.
+- **Fix**: Added `Output` to the `mediabunny` named imports list. Verified `Output`, `Conversion`, and `Input` prototype APIs (`dispose`, `cancel`, `execute`) directly against installed `mediabunny@1.61.6`.
+- **Subsequent Runtime Checks**: Verified remuxing and audio-track switching via MediaBunny conversions. Handled conversion cancellation (`conversion.cancel()`) on abort signal, and added `loadedmetadata` listener in `Player.jsx` so that `video.currentTime` and playback state are restored accurately when switching tracks.
 
-### Evidence & Observed Verification Results
+### 2. VegaMovies Resolution & Honest CORS Diagnosis
+- **Investigation**: Inspected live VegaMovies endpoints:
+  - `https://1vegamovies.baby/search.php?q=...&page=1` returns HTTP 404.
+  - `https://1vegamovies.baby/?s=...` returns HTTP 200 HTML in Node, but responds with `access-control-allow-origin: null`.
+  - In a standalone browser client without backend proxying, cross-origin HTTP requests to third-party domains lacking CORS headers are blocked by browser security.
+- **Honest Reporting**: In accordance with Rule 1 and Rule 7, no public CORS proxies or fabricated stream URLs were introduced. VegaMovies resolution now diagnoses HTTP 404 / CORS blockage explicitly, providing clear feedback in the UI rather than hanging or claiming playback works.
+- **Backend Folder Untouched**: `packages/server/` was kept completely untouched.
+
+### 3. Removal of Silent Test Fixture Fallback
+- **Root Cause**: `createStream` previously caught resolution failures and silently fell back to `/fixtures/multi-audio-test.mkv`, giving the illusion that a real movie was playing.
+- **Fix**: `createStream` now throws an explicit error when a real title cannot be resolved. Test fixture playback is only activated when explicitly requested (`isTestFixture: true` / `id === "test-fixture"`).
+- **Explicit Test Actions**: Added a dedicated "Play Test Fixture" button to the player error panel and a "Test Fixture" button in the Navbar, allowing users to test MediaBunny multi-audio inspection and switching in test mode (explicitly marked with a `TEST MODE` badge).
+
+### 4. Clean Abort Handling & Player Continuity
+- **Fix**: Aborted requests cleanly throw `AbortError`, which is caught and ignored in `Player.jsx`, `api.js`, and `pipeline.js` without unhandled promise rejections.
+- **UI Preservation**: Player UI controls, scrub bar, audio selector, speed settings, resume/progress store, and series next-episode queues remain fully functional and intact.
+
+### 5. Verification Evidence
 - `npm run test:client`: 38 tests executed, 38 passed, 0 failed.
 - `npm run build`: Vite production bundle generated cleanly (0 errors).
 - `node scripts/verify-client-mediabunny.mjs`:
-  - 11 Cinemeta home rows fetched directly from public CORS-enabled endpoints (0 `/api/home` requests).
-  - Search for "Inception" and "Breaking Bad" verified directly against Cinemeta (0 `/api/search` requests).
-  - Detail metadata for movie and series episode (S1E1) verified directly against Cinemeta (0 `/api/detail` requests).
-  - MediaBunny detected Matroska container and 2 real audio tracks: Track 2 (English, AAC, 44100Hz) and Track 3 (Spanish, AAC, 44100Hz).
-  - MediaBunny remuxed Track 2 into valid 2.80MB MP4, and switched to Track 3 generating valid 2.80MB MP4 verified with switched audio stream.
-  - Zero runtime `/api/*` references verified across all client source code.
+  - Cinemeta Home Rows: 11 rows fetched directly.
+  - Search: Movie "Inception" (10 results), Series "Breaking Bad" (10 results).
+  - Detail: "Inception" (148 min, rating 8.8), "Breaking Bad" (62 episodes, S1E1).
+  - MediaBunny Audio Discovery: Detected Matroska container with Track 2 (English, AAC) and Track 3 (Spanish, AAC).
+  - MediaBunny Audio Switching: Remuxed with Track 2 (2,804,000 bytes MP4) and Track 3 (2,803,707 bytes MP4), verified single switched audio stream.
+  - VegaMovies Resolution: Accurately reported status `cors_blocked` and HTTP 404 diagnosis.
+  - Zero runtime `/api/*` references in client source files verified.
 
 
 ## Multi-provider search, search-result details, and real playback (verified)

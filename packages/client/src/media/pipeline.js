@@ -1,5 +1,6 @@
 import {
   Input,
+  Output,
   ALL_FORMATS,
   UrlSource,
   BlobSource,
@@ -34,7 +35,17 @@ export function isDirectBrowserPlayable(url) {
   return DIRECT_CONTAINERS.has(ext);
 }
 
+function checkAbort(signal) {
+  if (signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+}
+
 export async function createMediaPipeline({ sourceUrl, preferredLang = null, signal, onProgress } = {}) {
+  checkAbort(signal);
+
   if (!sourceUrl) {
     throw new Error("No media source URL provided");
   }
@@ -65,14 +76,22 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
       formats: ALL_FORMATS
     });
   } catch (err) {
+    checkAbort(signal);
     throw new Error(`MediaBunny initialization failed: ${err.message}`);
   }
+
+  checkAbort(signal);
 
   let format;
   try {
     format = await input.getFormat();
   } catch (err) {
-    input.dispose?.();
+    try {
+      input.dispose?.();
+    } catch {
+      // ignore
+    }
+    checkAbort(signal);
     const isCors = err.name === "TypeError" || /cors|failed to fetch|network|403|401/i.test(err.message);
     if (isCors) {
       throw new Error(`CORS error: Direct browser read of "${sourceUrl}" was blocked by browser CORS restrictions on the remote host.`);
@@ -80,8 +99,14 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     throw new Error(`Media inspection failed: ${err.message}`);
   }
 
+  checkAbort(signal);
+
   if (!format) {
-    input.dispose?.();
+    try {
+      input.dispose?.();
+    } catch {
+      // ignore
+    }
     throw new Error("Unsupported format: MediaBunny could not detect a valid media container.");
   }
 
@@ -91,9 +116,16 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     audioTracksRaw = await input.getAudioTracks();
     videoTracksRaw = await input.getVideoTracks();
   } catch (err) {
-    input.dispose?.();
+    try {
+      input.dispose?.();
+    } catch {
+      // ignore
+    }
+    checkAbort(signal);
     throw new Error(`Failed to read media tracks: ${err.message}`);
   }
+
+  checkAbort(signal);
 
   const duration = await input.computeDuration().catch(() => input.getDurationFromMetadata().catch(() => 0));
 
@@ -125,7 +157,6 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     : null;
 
   // 3. Direct browser-playable MP4/WebM:
-  // If the browser can natively play the container without remuxing, return direct mode
   if (format.name.includes("MP4") || format.name.includes("WebM")) {
     return {
       mode: "direct",
@@ -137,23 +168,28 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
       duration,
       switchAudioTrack: async () => absoluteUrl,
       destroy: () => {
-        input.dispose?.();
+        try {
+          input.dispose?.();
+        } catch {
+          // ignore
+        }
       }
     };
   }
 
   // 4. Compatible Matroska (MKV) source:
-  // Process client-side via MediaBunny remuxing to MP4 with real audio track selection!
   if (format.name.includes("Matroska") || format.name.includes("WebM")) {
-    // Check video codec compatibility: H.264 / AVC or VP8 / VP9 / AV1
     const vCodec = videoTrackInfo?.codec ?? "";
     const isVideoCompatible = /avc|h264|vp8|vp9|av1/i.test(vCodec);
     if (!isVideoCompatible && vCodec) {
-      input.dispose?.();
+      try {
+        input.dispose?.();
+      } catch {
+        // ignore
+      }
       throw new Error(`Unsupported video codec "${vCodec}": MediaBunny client-side playback requires H.264/AVC, VP8, VP9, or AV1.`);
     }
 
-    // Determine initial audio track
     let initialTrackId = audioTracks[0]?.id ?? null;
     if (preferredLang) {
       const match = audioTracks.find((t) => t.lang === preferredLang || t.name.toLowerCase().includes(preferredLang.toLowerCase()));
@@ -163,7 +199,9 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     let activeObjectUrl = null;
 
     async function remuxWithTrack(selectedTrackId) {
+      checkAbort(signal);
       onProgress?.("remuxing", "Processing MKV client-side with MediaBunny...");
+
       const output = new Output({
         format: new Mp4OutputFormat(),
         target: new BufferTarget()
@@ -184,7 +222,32 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
         throw new Error(`MediaBunny remux failed: unsupported track configuration (${JSON.stringify(conversion.discardedTracks)})`);
       }
 
-      await conversion.execute();
+      let abortHandler = null;
+      if (signal) {
+        checkAbort(signal);
+        abortHandler = () => {
+          try {
+            conversion.cancel();
+          } catch {
+            // ignore
+          }
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
+
+      try {
+        await conversion.execute();
+      } catch (err) {
+        checkAbort(signal);
+        throw err;
+      } finally {
+        if (signal && abortHandler) {
+          signal.removeEventListener("abort", abortHandler);
+        }
+      }
+
+      checkAbort(signal);
+
       const buffer = output.target.buffer;
       if (!buffer || buffer.byteLength === 0) {
         throw new Error("MediaBunny remux produced empty media buffer");
@@ -192,7 +255,11 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
 
       const blob = new Blob([buffer], { type: "video/mp4" });
       if (activeObjectUrl) {
-        URL.revokeObjectURL(activeObjectUrl);
+        try {
+          URL.revokeObjectURL(activeObjectUrl);
+        } catch {
+          // ignore
+        }
       }
       activeObjectUrl = URL.createObjectURL(blob);
       return activeObjectUrl;
@@ -213,14 +280,26 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
       },
       destroy: () => {
         if (activeObjectUrl) {
-          URL.revokeObjectURL(activeObjectUrl);
+          try {
+            URL.revokeObjectURL(activeObjectUrl);
+          } catch {
+            // ignore
+          }
           activeObjectUrl = null;
         }
-        input.dispose?.();
+        try {
+          input.dispose?.();
+        } catch {
+          // ignore
+        }
       }
     };
   }
 
-  input.dispose?.();
+  try {
+    input.dispose?.();
+  } catch {
+    // ignore
+  }
   throw new Error(`Unsupported container format "${format.name}". Browser playback not supported for this media.`);
 }

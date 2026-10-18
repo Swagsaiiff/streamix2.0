@@ -22,35 +22,69 @@ export async function fetchDetail(type, id, options = {}) {
   return { item };
 }
 
-export async function createStream(type, id, { lang, provider, season, episode, title, year, onStatus, ...options } = {}) {
+export async function createStream(type, id, { lang, provider, season, episode, title, year, onStatus, isTestFixture = false, ...options } = {}) {
+  if (options.signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
+  }
+
   let sourceUrl = null;
   let sourceStatus = "provider_stream";
   let streamNote = null;
   let sourceProvider = provider ?? "MediaBunny";
-
-  // If a title was not provided directly in options, look up detail to get real title & year
   let resolvedTitle = title;
   let resolvedYear = year;
-  if (!resolvedTitle) {
-    try {
-      const detail = await getCinemetaDetails(type, id, options?.signal);
-      resolvedTitle = detail.title;
-      resolvedYear = detail.year;
-    } catch {
-      resolvedTitle = id;
-    }
-  }
 
-  // Attempt real VegaMovies resolution client-side
-  try {
+  // Check if test fixture mode is explicitly requested
+  const isFixtureMode = isTestFixture || id === "test-fixture" || options.fixture === true;
+
+  if (isFixtureMode) {
+    sourceUrl = FIXTURE_FALLBACK_URL;
+    sourceStatus = "fixture_fallback";
+    sourceProvider = "Test Fixture";
+    streamNote = "TEST MODE: Playing local multi-audio fixture (MediaBunny test pipeline).";
+    resolvedTitle = resolvedTitle || "STREAMIX Multi-Audio Test Fixture";
+  } else {
+    // Real movie or series title resolution
+    if (!resolvedTitle) {
+      try {
+        const detail = await getCinemetaDetails(type, id, options.signal);
+        resolvedTitle = detail.title;
+        resolvedYear = detail.year;
+      } catch (err) {
+        if (options.signal?.aborted || err.name === "AbortError") {
+          const abortErr = new Error("Aborted");
+          abortErr.name = "AbortError";
+          throw abortErr;
+        }
+        resolvedTitle = id;
+      }
+    }
+
+    if (options.signal?.aborted) {
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+
+    onStatus?.("resolving", `Resolving stream for "${resolvedTitle}"...`);
+
+    // Attempt real VegaMovies resolution client-side
     const vegaResult = await resolveVegaStream({
       title: resolvedTitle,
       year: resolvedYear,
       type,
       season,
       episode,
-      signal: options?.signal
+      signal: options.signal
     });
+
+    if (options.signal?.aborted) {
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      throw err;
+    }
 
     if (vegaResult.status === "provider_stream" && vegaResult.url) {
       sourceUrl = vegaResult.url;
@@ -58,18 +92,17 @@ export async function createStream(type, id, { lang, provider, season, episode, 
       sourceProvider = "VegaMovies";
       streamNote = vegaResult.note;
     } else {
-      // Direct VegaMovies scraping failed (e.g. CORS restriction on third-party host)
-      // Fall back honestly to the multi-audio test fixture
-      sourceUrl = FIXTURE_FALLBACK_URL;
-      sourceStatus = "fixture_fallback";
-      streamNote = vegaResult.error
-        ? `TEST MODE: ${vegaResult.error} — Playing test fixture with MediaBunny.`
-        : `TEST MODE: VegaMovies match not playable — Playing test fixture with MediaBunny.`;
+      // Do NOT silently substitute the test fixture!
+      // Report the failure honestly as required by project rules.
+      const failureReason = vegaResult.error || `No playable stream source could be resolved from VegaMovies for "${resolvedTitle}".`;
+      throw new Error(failureReason);
     }
-  } catch (err) {
-    sourceUrl = FIXTURE_FALLBACK_URL;
-    sourceStatus = "fixture_fallback";
-    streamNote = `TEST MODE: Direct resolution error (${err.message}) — Playing test fixture with MediaBunny.`;
+  }
+
+  if (options.signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    throw err;
   }
 
   onStatus?.("inspecting", "Inspecting media client-side with MediaBunny...");
@@ -78,7 +111,7 @@ export async function createStream(type, id, { lang, provider, season, episode, 
   const pipeline = await createMediaPipeline({
     sourceUrl,
     preferredLang: lang,
-    signal: options?.signal,
+    signal: options.signal,
     onProgress: (status, message) => onStatus?.(status, message)
   });
 
