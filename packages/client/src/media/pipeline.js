@@ -82,7 +82,7 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
 
   checkAbort(signal);
 
-  let format;
+  let format = null;
   try {
     format = await input.getFormat();
   } catch (err) {
@@ -96,33 +96,49 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     if (isCors) {
       throw new Error(`CORS error: Direct browser read of "${sourceUrl}" was blocked by browser CORS restrictions on the remote host.`);
     }
-    throw new Error(`Media inspection failed: ${err.message}`);
+    // Graceful fallback: If MediaBunny format inspection fails on remote stream, fall back to direct browser playback
+    return {
+      mode: "direct",
+      format: "direct",
+      playbackUrl: absoluteUrl,
+      audioTracks: [],
+      activeTrack: null,
+      videoTrack: null,
+      duration: 0,
+      switchAudioTrack: async () => absoluteUrl,
+      destroy: () => {}
+    };
   }
 
   checkAbort(signal);
 
   if (!format) {
-    try {
-      input.dispose?.();
-    } catch {
-      // ignore
-    }
-    throw new Error("Unsupported format: MediaBunny could not detect a valid media container.");
+    return {
+      mode: "direct",
+      format: "direct",
+      playbackUrl: absoluteUrl,
+      audioTracks: [],
+      activeTrack: null,
+      videoTrack: null,
+      duration: 0,
+      switchAudioTrack: async () => absoluteUrl,
+      destroy: () => {
+        try {
+          input?.dispose?.();
+        } catch {
+          // ignore
+        }
+      }
+    };
   }
 
   let audioTracksRaw = [];
   let videoTracksRaw = [];
   try {
-    audioTracksRaw = await input.getAudioTracks();
-    videoTracksRaw = await input.getVideoTracks();
-  } catch (err) {
-    try {
-      input.dispose?.();
-    } catch {
-      // ignore
-    }
-    checkAbort(signal);
-    throw new Error(`Failed to read media tracks: ${err.message}`);
+    audioTracksRaw = await input.getAudioTracks().catch(() => []);
+    videoTracksRaw = await input.getVideoTracks().catch(() => []);
+  } catch {
+    // If reading tracks fails, degrade gracefully
   }
 
   checkAbort(signal);
@@ -177,17 +193,29 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
     };
   }
 
-  // 4. Compatible Matroska (MKV) source:
+  // 4. Matroska (MKV) source:
   if (format.name.includes("Matroska") || format.name.includes("WebM")) {
     const vCodec = videoTrackInfo?.codec ?? "";
     const isVideoCompatible = /avc|h264|vp8|vp9|av1/i.test(vCodec);
     if (!isVideoCompatible && vCodec) {
-      try {
-        input.dispose?.();
-      } catch {
-        // ignore
-      }
-      throw new Error(`Unsupported video codec "${vCodec}": MediaBunny client-side playback requires H.264/AVC, VP8, VP9, or AV1.`);
+      // HEVC or non-remuxable codec in browser: fall back to direct browser playback with native decoder
+      return {
+        mode: "direct",
+        format: format.name,
+        playbackUrl: absoluteUrl,
+        audioTracks,
+        activeTrack: audioTracks[0]?.id ?? null,
+        videoTrack: videoTrackInfo,
+        duration,
+        switchAudioTrack: async () => absoluteUrl,
+        destroy: () => {
+          try {
+            input.dispose?.();
+          } catch {
+            // ignore
+          }
+        }
+      };
     }
 
     let initialTrackId = audioTracks[0]?.id ?? null;
@@ -265,41 +293,73 @@ export async function createMediaPipeline({ sourceUrl, preferredLang = null, sig
       return activeObjectUrl;
     }
 
-    const playbackUrl = await remuxWithTrack(initialTrackId);
+    try {
+      const playbackUrl = await remuxWithTrack(initialTrackId);
 
-    return {
-      mode: "mediabunny",
-      format: format.name,
-      playbackUrl,
-      audioTracks,
-      activeTrack: initialTrackId,
-      videoTrack: videoTrackInfo,
-      duration,
-      switchAudioTrack: async (newTrackId) => {
-        return await remuxWithTrack(newTrackId);
-      },
-      destroy: () => {
-        if (activeObjectUrl) {
+      return {
+        mode: "mediabunny",
+        format: format.name,
+        playbackUrl,
+        audioTracks,
+        activeTrack: initialTrackId,
+        videoTrack: videoTrackInfo,
+        duration,
+        switchAudioTrack: async (newTrackId) => {
+          return await remuxWithTrack(newTrackId);
+        },
+        destroy: () => {
+          if (activeObjectUrl) {
+            try {
+              URL.revokeObjectURL(activeObjectUrl);
+            } catch {
+              // ignore
+            }
+          }
           try {
-            URL.revokeObjectURL(activeObjectUrl);
+            input.dispose?.();
           } catch {
             // ignore
           }
-          activeObjectUrl = null;
         }
-        try {
-          input.dispose?.();
-        } catch {
-          // ignore
+      };
+    } catch (err) {
+      // If remuxing fails (e.g. large file buffer limit or unsupported track in execution), fall back to direct playback
+      return {
+        mode: "direct",
+        format: format.name,
+        playbackUrl: absoluteUrl,
+        audioTracks,
+        activeTrack: initialTrackId,
+        videoTrack: videoTrackInfo,
+        duration,
+        switchAudioTrack: async () => absoluteUrl,
+        destroy: () => {
+          try {
+            input.dispose?.();
+          } catch {
+            // ignore
+          }
         }
-      }
-    };
+      };
+    }
   }
 
-  try {
-    input.dispose?.();
-  } catch {
-    // ignore
-  }
-  throw new Error(`Unsupported container format "${format.name}". Browser playback not supported for this media.`);
+  // 5. Fallback for other direct formats
+  return {
+    mode: "direct",
+    format: format.name,
+    playbackUrl: absoluteUrl,
+    audioTracks,
+    activeTrack: audioTracks[0]?.id ?? null,
+    videoTrack: videoTrackInfo,
+    duration,
+    switchAudioTrack: async () => absoluteUrl,
+    destroy: () => {
+      try {
+        input.dispose?.();
+      } catch {
+        // ignore
+      }
+    }
+  };
 }

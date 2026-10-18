@@ -46,7 +46,8 @@ function localCorsProxyPlugin() {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "*",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Expose-Headers": "*"
+        "Access-Control-Expose-Headers": "*",
+        "Accept-Ranges": "bytes"
       };
 
       for (const [key, val] of upstream.headers) {
@@ -72,6 +73,63 @@ function localCorsProxyPlugin() {
         }
       }
 
+      // If client requested a Range but upstream responded with 200 and a Content-Length,
+      // simulate HTTP 206 Partial Content so browser video and MediaBunny can stream chunks.
+      const rangeHeader = req.headers.range;
+      const upstreamTotalStr = upstream.headers.get("content-length");
+      const upstreamTotal = upstreamTotalStr ? parseInt(upstreamTotalStr, 10) : NaN;
+
+      if (rangeHeader && upstream.status === 200 && !isNaN(upstreamTotal) && upstreamTotal > 0) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d+)?/i);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : upstreamTotal - 1;
+          const clampedEnd = Math.min(end, upstreamTotal - 1);
+
+          if (start <= clampedEnd && start < upstreamTotal) {
+            const chunkSize = clampedEnd - start + 1;
+            responseHeaders["content-range"] = `bytes ${start}-${clampedEnd}/${upstreamTotal}`;
+            responseHeaders["content-length"] = String(chunkSize);
+
+            res.writeHead(206, responseHeaders);
+
+            if (!upstream.body) {
+              res.end();
+              return;
+            }
+
+            const nodeStream = Readable.fromWeb(upstream.body);
+            let bytesCount = 0;
+
+            nodeStream.on("data", (chunk) => {
+              const chunkStart = bytesCount;
+              const chunkEnd = bytesCount + chunk.length - 1;
+              bytesCount += chunk.length;
+
+              if (chunkEnd < start) {
+                return;
+              }
+
+              const sliceStart = Math.max(0, start - chunkStart);
+              const sliceEnd = Math.min(chunk.length, clampedEnd - chunkStart + 1);
+
+              if (sliceStart < sliceEnd) {
+                res.write(chunk.subarray(sliceStart, sliceEnd));
+              }
+
+              if (bytesCount > clampedEnd) {
+                nodeStream.destroy();
+                res.end();
+              }
+            });
+
+            nodeStream.on("end", () => res.end());
+            nodeStream.on("error", () => res.end());
+            req.on("close", () => nodeStream.destroy());
+            return;
+          }
+        }
+      }
 
       res.writeHead(upstream.status, responseHeaders);
 

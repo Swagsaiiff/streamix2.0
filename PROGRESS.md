@@ -1,9 +1,16 @@
 # STREAMIX — Progress
 
+Phase 13: MediaBunny Pipeline Graceful Fallback & Proxy Range Slicing (Completed).
+Diagnosed root causes for `Media inspection failed: Input has an unsupported or unrecognizable format`:
+1. Upstream Google Video Servers (`video-downloads.googleusercontent.com`) serve Matroska/HEVC media with `HTTP 200` without answering byte-range requests directly. When MediaBunny probed the container, the lack of `206 Partial Content` caused buffer eviction in sequential mode.
+2. Added HTTP Range slicing in `packages/client/vite.config.js`: when a client sends `Range: bytes=start-end` and upstream returns `200`, the proxy simulates `206 Partial Content` with `Accept-Ranges: bytes`, `Content-Range`, and `Content-Length`, piping only the requested range and terminating cleanly.
+3. Made `packages/client/src/media/pipeline.js` resilient: when MediaBunny format detection, track reading, or remuxing cannot execute (such as 10-bit HEVC x265 or large MKV files), it never throws a fatal error—it gracefully falls back to direct browser native playback (`mode: "direct"`), allowing native browser hardware decoding to play the video.
+4. Added native video decoding error listener in `packages/client/src/components/Player.jsx`.
+5. Verified: `npm run test:client` (59/59 passing), `npm run build` (built cleanly), `node scripts/verify-client-mediabunny.mjs` (all checks passing).
+
 ## Current phase
 
-Phase 12: MoviesDrive Hindi-Dubbed CSX Provider Porting & Integration (Completed).
-Audited all Hindi-dubbed providers in the CSX repository (`https://github.com/SaurabhKaperwan/CSX.git`): Bollyflix, MoviesDrive, Moviesmod, Rogmovies, and HDHub4u. Ported MoviesDrive (`packages/client/src/providers/moviesdrive.js`), the primary Hindi-dubbed and Bollywood provider in CSX. MoviesDrive features a working `search.php` endpoint with rich dual-audio Hindi catalog (Oppenheimer, Inception, Vincenzo, Stree 2, Animal, Breaking Bad, etc.) and direct media link resolution via HubCloud redirect chains. Integrated into `api.js` before VegaMovies fallback. Verified with 59 passing client unit tests, successful Vite production build, and all 7 MediaBunny checks passing.
+Phase 13: MediaBunny Pipeline Graceful Fallback & Proxy Range Slicing (Completed).
 
 
 

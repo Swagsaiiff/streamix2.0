@@ -269,6 +269,16 @@ export default function Player({ item, onClose, onProgress }) {
             },
             { once: true }
           );
+          video.addEventListener(
+            "error",
+            () => {
+              if (cancelled) return;
+              const err = video.error;
+              setError(`Playback error: ${err?.message || "Browser native decoder could not play this media stream."}`);
+              setPhase("error");
+            },
+            { once: true }
+          );
         }
       } catch (err) {
         if (cancelled || err.name === "AbortError") return;
